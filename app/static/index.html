@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoiceSurvey AI - Campaign Builder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb bg-orb-a"></div>
+    <div class="bg-orb bg-orb-b"></div>
+
+    <main class="layout">
+      <header class="header">
+        <h1>Survey Management (Campaign Builder)</h1>
+        <p>
+          Build opt-in voice survey campaigns with question flows, branching logic,
+          and participant uploads.
+        </p>
+      </header>
+
+      <section class="panel panel-create">
+        <h2>Create Campaign</h2>
+        <form id="campaign-form" class="grid-form">
+          <label>
+            Name
+            <input name="name" required minlength="2" placeholder="Brand NPS Q2" />
+          </label>
+          <label>
+            Language
+            <input name="language" value="en" maxlength="16" />
+          </label>
+          <label>
+            Timezone
+            <input name="timezone" value="UTC" maxlength="64" />
+          </label>
+          <label class="full">
+            Consent Text
+            <textarea
+              name="consent_text"
+              required
+              minlength="5"
+              placeholder="This call is recorded for quality and research purposes..."
+            ></textarea>
+          </label>
+          <button type="submit">Create Campaign</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Campaign Cards + Quick Actions</h2>
+        <div id="campaign-cards" class="cards"></div>
+      </section>
+
+      <section id="builder-panel" class="panel hidden">
+        <h2 id="builder-title">Campaign Builder</h2>
+
+        <div class="builder-grid">
+          <article class="subpanel">
+            <h3>Question Builder (Rating/MCQ/Free-Text)</h3>
+            <form id="question-form" class="stack-form">
+              <input name="key" required placeholder="q_nps" />
+              <input
+                name="prompt"
+                required
+                placeholder="How likely are you to recommend us?"
+              />
+              <div class="row">
+                <select name="question_type">
+                  <option value="rating">Rating</option>
+                  <option value="mcq">MCQ</option>
+                  <option value="free_text">Free Text</option>
+                </select>
+                <input
+                  name="options"
+                  placeholder="MCQ options, comma-separated"
+                />
+                <label class="check">
+                  <input name="required" type="checkbox" checked /> Required
+                </label>
+              </div>
+              <button type="submit">Add Question</button>
+            </form>
+            <ul id="question-list" class="list"></ul>
+          </article>
+
+          <article class="subpanel">
+            <h3>Skip Logic / Branching</h3>
+            <form id="rule-form" class="stack-form">
+              <select name="source_question_id" id="rule-source"></select>
+              <div class="row">
+                <select name="operator">
+                  <option value="equals">equals</option>
+                  <option value="not_equals">not_equals</option>
+                  <option value="contains">contains</option>
+                  <option value="gt">gt</option>
+                  <option value="lt">lt</option>
+                </select>
+                <input name="value" required placeholder="Condition value" />
+              </div>
+              <div class="row">
+                <select name="action" id="rule-action">
+                  <option value="goto">goto</option>
+                  <option value="end">end</option>
+                  <option value="escalate">escalate</option>
+                </select>
+                <select name="target_question_id" id="rule-target"></select>
+                <input name="priority" type="number" value="100" />
+              </div>
+              <button type="submit">Add Rule</button>
+            </form>
+            <ul id="rule-list" class="list"></ul>
+          </article>
+
+          <article class="subpanel">
+            <h3>Opt-in Participants Upload</h3>
+            <p class="hint">CSV columns: phone_number, full_name, locale</p>
+            <form id="upload-form" class="stack-form">
+              <input name="file" type="file" accept=".csv" required />
+              <button type="submit">Upload CSV</button>
+            </form>
+            <ul id="participant-list" class="list"></ul>
+          </article>
+        </div>
+      </section>
+
+      <div id="toast" class="toast hidden"></div>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
