@@ -6,6 +6,9 @@ VoiceSurvey AI `Survey Management (Campaign Builder)` MVP for creating and manag
 
 - Campaign creation and management: name, language, timezone, consent text.
 - Campaign cards with quick actions: open, duplicate, pause, resume, delete.
+- Scheduling and Campaign Execution: start, pause, resume, stop lifecycle.
+- Calling Policies: per-campaign windows, retry delay, cooldown, and calls-per-minute limit.
+- Background scheduler loop that applies policy constraints to eligible participants.
 - Question Builder: add/list/delete/reorder questions (`rating`, `mcq`, `free_text`).
 - Skip Logic / Branching: rule engine CRUD (`goto`, `end`, `escalate`) with priority.
 - Opt-in participants CSV upload and listing.
@@ -52,8 +55,14 @@ uvicorn app.main:app --reload
 - `POST /api/campaigns`
 - `GET /api/campaigns/summary`
 - `POST /api/campaigns/{campaign_id}/duplicate`
+- `POST /api/campaigns/{campaign_id}/start`
 - `POST /api/campaigns/{campaign_id}/pause`
 - `POST /api/campaigns/{campaign_id}/resume`
+- `POST /api/campaigns/{campaign_id}/stop`
+- `GET /api/campaigns/{campaign_id}/execution`
+- `GET /api/campaigns/{campaign_id}/policy`
+- `PUT /api/campaigns/{campaign_id}/policy`
+- `GET /api/campaigns/{campaign_id}/attempts`
 - `POST /api/campaigns/{campaign_id}/questions`
 - `POST /api/campaigns/{campaign_id}/questions/reorder`
 - `POST /api/campaigns/{campaign_id}/rules`

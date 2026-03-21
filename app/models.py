@@ -131,6 +131,83 @@ class Participant(Base):
         UniqueConstraint("campaign_id", "phone_number", name="uq_campaign_phone"),
     )
 
+class CampaignExecution(Base):
+    __tablename__ = "campaign_executions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("campaigns.id"),
+        unique=True,
+        index=True,
+    )
+    state: Mapped[str] = mapped_column(
+        Enum("idle", "running", "paused", "stopped", name="execution_state"),
+        default="idle",
+        nullable=False,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_tick_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CallingPolicy(Base):
+    __tablename__ = "calling_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("campaigns.id"),
+        unique=True,
+        index=True,
+    )
+    window_start_hour: Mapped[int] = mapped_column(Integer, default=9, nullable=False)
+    window_end_hour: Mapped[int] = mapped_column(Integer, default=18, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    retry_delay_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    cooldown_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    max_calls_per_minute: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CallAttempt(Base):
+    __tablename__ = "call_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(
+        Enum("success", "failed", name="call_outcome"),
+        nullable=False,
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    finished_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
 
 class CallLog(Base):
     """SAA-101/SAA-105: Persisted record of every voice call session."""

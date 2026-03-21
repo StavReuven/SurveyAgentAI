@@ -27,10 +27,12 @@ def client(tmp_path: Path):
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.disable_scheduler = True
 
     with TestClient(app) as test_client:
         yield test_client
 
     app.dependency_overrides.clear()
+    app.state.disable_scheduler = False
     Base.metadata.drop_all(bind=engine)
     engine.dispose()

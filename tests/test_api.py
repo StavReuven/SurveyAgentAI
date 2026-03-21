@@ -66,7 +66,7 @@ def test_campaign_crud_and_summary(client):
     assert response.json() == {"deleted": True}
 
 
-def test_campaign_quick_actions_duplicate_pause_resume(client):
+def test_campaign_quick_actions_duplicate_start_pause_resume_stop(client):
     campaign = create_campaign(client)
     campaign_id = campaign["id"]
 
@@ -96,13 +96,77 @@ def test_campaign_quick_actions_duplicate_pause_resume(client):
     assert duplicate["id"] != campaign_id
     assert duplicate["status"] == "draft"
 
+    response = client.get(f"/api/campaigns/{campaign_id}/execution")
+    assert response.status_code == 200
+    assert response.json()["state"] == "idle"
+
+    response = client.post(f"/api/campaigns/{campaign_id}/start")
+    assert response.status_code == 200
+    assert response.json()["state"] == "running"
+
     response = client.post(f"/api/campaigns/{campaign_id}/pause")
     assert response.status_code == 200
     assert response.json()["status"] == "paused"
 
+    response = client.get(f"/api/campaigns/{campaign_id}/execution")
+    assert response.status_code == 200
+    assert response.json()["state"] == "paused"
+
     response = client.post(f"/api/campaigns/{campaign_id}/resume")
     assert response.status_code == 200
     assert response.json()["status"] == "active"
+
+    response = client.post(f"/api/campaigns/{campaign_id}/stop")
+    assert response.status_code == 200
+    assert response.json()["state"] == "stopped"
+
+    response = client.post(f"/api/campaigns/{campaign_id}/pause")
+    assert response.status_code == 409
+
+
+def test_calling_policy_get_and_update(client):
+    campaign = create_campaign(client)
+    campaign_id = campaign["id"]
+
+    response = client.get(f"/api/campaigns/{campaign_id}/policy")
+    assert response.status_code == 200
+    default_policy = response.json()
+    assert default_policy["window_start_hour"] == 9
+    assert default_policy["window_end_hour"] == 18
+    assert default_policy["max_attempts"] == 3
+
+    update_payload = {
+        "window_start_hour": 8,
+        "window_end_hour": 20,
+        "max_attempts": 4,
+        "retry_delay_minutes": 15,
+        "cooldown_hours": 2,
+        "max_calls_per_minute": 25,
+        "enabled": True,
+    }
+    response = client.put(f"/api/campaigns/{campaign_id}/policy", json=update_payload)
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["window_start_hour"] == 8
+    assert updated["window_end_hour"] == 20
+    assert updated["max_attempts"] == 4
+    assert updated["retry_delay_minutes"] == 15
+    assert updated["cooldown_hours"] == 2
+    assert updated["max_calls_per_minute"] == 25
+
+    response = client.put(
+        f"/api/campaigns/{campaign_id}/policy",
+        json={
+            "window_start_hour": 12,
+            "window_end_hour": 10,
+            "max_attempts": 3,
+            "retry_delay_minutes": 30,
+            "cooldown_hours": 1,
+            "max_calls_per_minute": 10,
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_questions_crud_and_reorder(client):
@@ -210,3 +274,12 @@ def test_participant_upload_and_list(client):
     assert len(participants) == 2
     phones = {item["phone_number"] for item in participants}
     assert phones == {"+15550000001", "+15550000002"}
+
+
+def test_attempts_endpoint_empty(client):
+    campaign = create_campaign(client)
+    campaign_id = campaign["id"]
+
+    response = client.get(f"/api/campaigns/{campaign_id}/attempts")
+    assert response.status_code == 200
+    assert response.json() == []

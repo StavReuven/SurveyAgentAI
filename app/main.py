@@ -1,8 +1,9 @@
 import asyncio
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,16 +14,29 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .database import Base, engine, get_db
-from .models import BranchRule, CallLog, Campaign, Participant, Question
+from .database import Base, SessionLocal, engine, get_db
+from .models import (
+    BranchRule,
+    CallLog,
+    CallAttempt,
+    CallingPolicy,
+    Campaign,
+    CampaignExecution,
+    Participant,
+    Question,
+)
 from .voice.dialogue.fsm import QuestionContext
 from .voice.pipeline import VoicePipeline
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .schemas import (
     CampaignCreate,
+    CampaignExecutionOut,
     CampaignOut,
     CampaignSummary,
     CampaignUpdate,
+    CallAttemptOut,
+    CallingPolicyOut,
+    CallingPolicyUpdate,
     ParticipantOut,
     QuestionCreate,
     QuestionOut,
@@ -44,6 +58,209 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+
+SCHEDULER_TICK_SECONDS = 5
+_scheduler_task: asyncio.Task | None = None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _get_or_create_execution(db: Session, campaign_id: int) -> CampaignExecution:
+    execution = (
+        db.query(CampaignExecution)
+        .filter(CampaignExecution.campaign_id == campaign_id)
+        .first()
+    )
+    if execution:
+        return execution
+
+    execution = CampaignExecution(campaign_id=campaign_id, state="idle")
+    db.add(execution)
+    db.flush()
+    return execution
+
+
+def _get_or_create_policy(db: Session, campaign_id: int) -> CallingPolicy:
+    policy = (
+        db.query(CallingPolicy)
+        .filter(CallingPolicy.campaign_id == campaign_id)
+        .first()
+    )
+    if policy:
+        return policy
+
+    policy = CallingPolicy(campaign_id=campaign_id)
+    db.add(policy)
+    db.flush()
+    return policy
+
+
+def _in_calling_window(campaign_timezone: str, policy: CallingPolicy, now_utc: datetime) -> bool:
+    try:
+        local_time = now_utc.astimezone(ZoneInfo(campaign_timezone))
+    except ZoneInfoNotFoundError:
+        local_time = now_utc
+
+    hour = local_time.hour
+    return policy.window_start_hour <= hour < policy.window_end_hour
+
+
+def _next_attempt_eligible(
+    db: Session,
+    campaign_id: int,
+    participant: Participant,
+    policy: CallingPolicy,
+    now_utc: datetime,
+) -> tuple[bool, int]:
+    attempts = (
+        db.query(CallAttempt)
+        .filter(
+            CallAttempt.campaign_id == campaign_id,
+            CallAttempt.participant_id == participant.id,
+        )
+        .order_by(CallAttempt.id.asc())
+        .all()
+    )
+    attempt_number = len(attempts) + 1
+    if len(attempts) >= policy.max_attempts:
+        return False, attempt_number
+
+    if not attempts:
+        return True, attempt_number
+
+    last_attempt = attempts[-1]
+    retry_ready_at = last_attempt.finished_at + timedelta(minutes=policy.retry_delay_minutes)
+    cooldown_ready_at = last_attempt.finished_at + timedelta(hours=policy.cooldown_hours)
+    ready_at = max(retry_ready_at, cooldown_ready_at)
+    return now_utc >= ready_at, attempt_number
+
+
+def _simulate_call_outcome(participant: Participant) -> tuple[str, str | None]:
+    if participant.phone_number.endswith("9"):
+        return "failed", "simulated temporary carrier failure"
+    return "success", None
+
+
+def _process_scheduler_tick(db: Session, execution: CampaignExecution):
+    campaign = db.get(Campaign, execution.campaign_id)
+    if not campaign:
+        return
+
+    policy = _get_or_create_policy(db, campaign.id)
+    now_utc = _utcnow()
+
+    if not policy.enabled:
+        execution.last_tick_at = now_utc
+        return
+
+    if not _in_calling_window(campaign.timezone, policy, now_utc):
+        execution.last_tick_at = now_utc
+        return
+
+    started_last_minute = (
+        db.query(func.count(CallAttempt.id))
+        .filter(
+            CallAttempt.campaign_id == campaign.id,
+            CallAttempt.started_at >= now_utc - timedelta(minutes=1),
+        )
+        .scalar()
+        or 0
+    )
+    remaining_budget = max(policy.max_calls_per_minute - started_last_minute, 0)
+    if remaining_budget <= 0:
+        execution.last_tick_at = now_utc
+        return
+
+    candidates = (
+        db.query(Participant)
+        .filter(
+            Participant.campaign_id == campaign.id,
+            Participant.status.in_(["pending", "failed"]),
+            Participant.opt_in.is_(True),
+        )
+        .order_by(Participant.id.asc())
+        .all()
+    )
+
+    for participant in candidates:
+        if remaining_budget <= 0:
+            break
+
+        eligible, attempt_number = _next_attempt_eligible(
+            db,
+            campaign.id,
+            participant,
+            policy,
+            now_utc,
+        )
+        if not eligible:
+            continue
+
+        outcome, note = _simulate_call_outcome(participant)
+        db.add(
+            CallAttempt(
+                campaign_id=campaign.id,
+                participant_id=participant.id,
+                attempt_number=attempt_number,
+                outcome=outcome,
+                started_at=now_utc,
+                finished_at=now_utc,
+                note=note,
+            )
+        )
+
+        participant.status = "contacted" if outcome == "success" else "failed"
+        meta = participant.meta or {}
+        meta["last_call_attempt_at"] = now_utc.isoformat()
+        meta["last_call_outcome"] = outcome
+        meta["attempt_number"] = attempt_number
+        if note:
+            meta["last_call_note"] = note
+        participant.meta = meta
+
+        remaining_budget -= 1
+
+    execution.last_tick_at = now_utc
+
+
+async def _scheduler_loop():
+    while True:
+        db = SessionLocal()
+        try:
+            running = (
+                db.query(CampaignExecution)
+                .filter(CampaignExecution.state == "running")
+                .all()
+            )
+            for execution in running:
+                _process_scheduler_tick(db, execution)
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+
+        await asyncio.sleep(SCHEDULER_TICK_SECONDS)
+
+
+@app.on_event("startup")
+async def startup_scheduler():
+    global _scheduler_task
+    if getattr(app.state, "disable_scheduler", False):
+        return
+    if _scheduler_task is None or _scheduler_task.done():
+        _scheduler_task = asyncio.create_task(_scheduler_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    global _scheduler_task
+    if _scheduler_task:
+        _scheduler_task.cancel()
+        _scheduler_task = None
 
 
 @app.get("/")
@@ -186,7 +403,14 @@ def pause_campaign(campaign_id: int, db: Session = Depends(get_db)):
     campaign = db.get(Campaign, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+
+    execution = _get_or_create_execution(db, campaign_id)
+    if execution.state == "stopped":
+        raise HTTPException(status_code=409, detail="Campaign is stopped. Use start to run it again")
+
     campaign.status = "paused"
+    execution.state = "paused"
+    execution.paused_at = _utcnow()
     db.commit()
     db.refresh(campaign)
     return campaign
@@ -197,10 +421,142 @@ def resume_campaign(campaign_id: int, db: Session = Depends(get_db)):
     campaign = db.get(Campaign, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+
+    execution = _get_or_create_execution(db, campaign_id)
+    if execution.state == "stopped":
+        raise HTTPException(status_code=409, detail="Campaign is stopped. Use start to run it again")
+
     campaign.status = "active"
+    execution.state = "running"
+    if execution.started_at is None:
+        execution.started_at = _utcnow()
     db.commit()
     db.refresh(campaign)
     return campaign
+
+
+@app.get("/api/campaigns/{campaign_id}/execution", response_model=CampaignExecutionOut)
+def get_campaign_execution(campaign_id: int, db: Session = Depends(get_db)):
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    execution = _get_or_create_execution(db, campaign_id)
+    db.commit()
+    db.refresh(execution)
+    return CampaignExecutionOut(
+        campaign_id=campaign_id,
+        state=execution.state,
+        started_at=execution.started_at,
+        paused_at=execution.paused_at,
+        stopped_at=execution.stopped_at,
+        last_tick_at=execution.last_tick_at,
+    )
+
+
+@app.post("/api/campaigns/{campaign_id}/start", response_model=CampaignExecutionOut)
+def start_campaign(campaign_id: int, db: Session = Depends(get_db)):
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    execution = _get_or_create_execution(db, campaign_id)
+    if execution.state == "running":
+        raise HTTPException(status_code=409, detail="Campaign is already running")
+
+    now_utc = _utcnow()
+    execution.state = "running"
+    execution.started_at = now_utc
+    execution.paused_at = None
+    execution.stopped_at = None
+    campaign.status = "active"
+
+    db.commit()
+    db.refresh(execution)
+    return CampaignExecutionOut(
+        campaign_id=campaign_id,
+        state=execution.state,
+        started_at=execution.started_at,
+        paused_at=execution.paused_at,
+        stopped_at=execution.stopped_at,
+        last_tick_at=execution.last_tick_at,
+    )
+
+
+@app.post("/api/campaigns/{campaign_id}/stop", response_model=CampaignExecutionOut)
+def stop_campaign(campaign_id: int, db: Session = Depends(get_db)):
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    execution = _get_or_create_execution(db, campaign_id)
+    if execution.state == "stopped":
+        raise HTTPException(status_code=409, detail="Campaign is already stopped")
+
+    now_utc = _utcnow()
+    execution.state = "stopped"
+    execution.stopped_at = now_utc
+    campaign.status = "paused"
+
+    db.commit()
+    db.refresh(execution)
+    return CampaignExecutionOut(
+        campaign_id=campaign_id,
+        state=execution.state,
+        started_at=execution.started_at,
+        paused_at=execution.paused_at,
+        stopped_at=execution.stopped_at,
+        last_tick_at=execution.last_tick_at,
+    )
+
+
+@app.get("/api/campaigns/{campaign_id}/policy", response_model=CallingPolicyOut)
+def get_calling_policy(campaign_id: int, db: Session = Depends(get_db)):
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    policy = _get_or_create_policy(db, campaign_id)
+    db.commit()
+    db.refresh(policy)
+    return CallingPolicyOut(
+        campaign_id=campaign_id,
+        window_start_hour=policy.window_start_hour,
+        window_end_hour=policy.window_end_hour,
+        max_attempts=policy.max_attempts,
+        retry_delay_minutes=policy.retry_delay_minutes,
+        cooldown_hours=policy.cooldown_hours,
+        max_calls_per_minute=policy.max_calls_per_minute,
+        enabled=policy.enabled,
+    )
+
+
+@app.put("/api/campaigns/{campaign_id}/policy", response_model=CallingPolicyOut)
+def update_calling_policy(
+    campaign_id: int,
+    payload: CallingPolicyUpdate,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    policy = _get_or_create_policy(db, campaign_id)
+    for key, value in payload.model_dump().items():
+        setattr(policy, key, value)
+
+    db.commit()
+    db.refresh(policy)
+    return CallingPolicyOut(
+        campaign_id=campaign_id,
+        window_start_hour=policy.window_start_hour,
+        window_end_hour=policy.window_end_hour,
+        max_attempts=policy.max_attempts,
+        retry_delay_minutes=policy.retry_delay_minutes,
+        cooldown_hours=policy.cooldown_hours,
+        max_calls_per_minute=policy.max_calls_per_minute,
+        enabled=policy.enabled,
+    )
 
 
 @app.post("/api/campaigns/{campaign_id}/questions", response_model=QuestionOut)
@@ -418,6 +774,37 @@ def list_participants(campaign_id: int, db: Session = Depends(get_db)):
         .order_by(Participant.id.desc())
         .all()
     )
+
+
+@app.get("/api/campaigns/{campaign_id}/attempts", response_model=list[CallAttemptOut])
+def list_call_attempts(campaign_id: int, limit: int = 30, db: Session = Depends(get_db)):
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    safe_limit = max(1, min(limit, 200))
+    rows = (
+        db.query(CallAttempt, Participant.phone_number)
+        .join(Participant, Participant.id == CallAttempt.participant_id)
+        .filter(CallAttempt.campaign_id == campaign_id)
+        .order_by(CallAttempt.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+
+    return [
+        CallAttemptOut(
+            id=attempt.id,
+            participant_id=attempt.participant_id,
+            participant_phone=phone,
+            attempt_number=attempt.attempt_number,
+            outcome=attempt.outcome,
+            started_at=attempt.started_at,
+            finished_at=attempt.finished_at,
+            note=attempt.note,
+        )
+        for attempt, phone in rows
+    ]
 
 
 # ===========================================================================

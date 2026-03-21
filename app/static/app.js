@@ -1,6 +1,8 @@
 const state = {
   selectedCampaignId: null,
   questions: [],
+  execution: null,
+  policy: null,
 };
 
 const toast = document.getElementById("toast");
@@ -13,6 +15,10 @@ const participantList = document.getElementById("participant-list");
 const ruleSource = document.getElementById("rule-source");
 const ruleTarget = document.getElementById("rule-target");
 const ruleAction = document.getElementById("rule-action");
+const executionStatus = document.getElementById("execution-status");
+const policyForm = document.getElementById("policy-form");
+const attemptList = document.getElementById("attempt-list");
+const refreshAttemptsButton = document.getElementById("refresh-attempts");
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -98,6 +104,57 @@ function fillRuleQuestionSelects() {
   ruleTarget.innerHTML = `<option value="">(none)</option>${options}`;
 }
 
+function renderExecutionStatus() {
+  if (!state.execution) {
+    executionStatus.textContent = "Execution: unknown";
+    return;
+  }
+  const lastTick = state.execution.last_tick_at
+    ? ` | last tick: ${new Date(state.execution.last_tick_at).toLocaleString()}`
+    : "";
+  executionStatus.textContent = `Execution: ${state.execution.state}${lastTick}`;
+}
+
+function renderPolicyForm() {
+  if (!state.policy) {
+    return;
+  }
+  policyForm.window_start_hour.value = state.policy.window_start_hour;
+  policyForm.window_end_hour.value = state.policy.window_end_hour;
+  policyForm.max_attempts.value = state.policy.max_attempts;
+  policyForm.retry_delay_minutes.value = state.policy.retry_delay_minutes;
+  policyForm.cooldown_hours.value = state.policy.cooldown_hours;
+  policyForm.max_calls_per_minute.value = state.policy.max_calls_per_minute;
+  policyForm.enabled.checked = state.policy.enabled;
+}
+
+function renderAttempts(items) {
+  attemptList.innerHTML = "";
+  if (!items.length) {
+    attemptList.innerHTML = "<li>No call attempts yet.</li>";
+    return;
+  }
+
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    const when = new Date(item.started_at).toLocaleString();
+    li.innerHTML = `
+      <div class="line">
+        <strong>${item.outcome.toUpperCase()}</strong>
+        <span>#${item.attempt_number} | ${when}</span>
+      </div>
+      <div>${item.participant_phone}</div>
+      <div>${item.note || "-"}</div>
+    `;
+    attemptList.appendChild(li);
+  });
+}
+
+async function loadAttempts(campaignId) {
+  const attempts = await api(`/api/campaigns/${campaignId}/attempts?limit=30`);
+  renderAttempts(attempts);
+}
+
 async function loadCampaignCards() {
   const campaigns = await api("/api/campaigns/summary");
   campaignCards.innerHTML = "";
@@ -116,8 +173,10 @@ async function loadCampaignCards() {
       <div class="actions">
         <button data-open="${c.id}">Open Builder</button>
         <button data-duplicate="${c.id}" class="alt">Duplicate</button>
+        <button data-start="${c.id}" class="alt">Start</button>
         <button data-pause="${c.id}" class="alt">Pause</button>
         <button data-resume="${c.id}" class="alt">Resume</button>
+        <button data-stop="${c.id}" class="warn">Stop</button>
         <button data-delete-campaign="${c.id}" class="warn">Delete</button>
       </div>
     `;
@@ -139,6 +198,14 @@ async function openCampaign(id) {
 
   const participants = await api(`/api/campaigns/${id}/participants`);
   renderParticipants(participants);
+
+  state.execution = await api(`/api/campaigns/${id}/execution`);
+  renderExecutionStatus();
+
+  state.policy = await api(`/api/campaigns/${id}/policy`);
+  renderPolicyForm();
+
+  await loadAttempts(id);
 }
 
 function getSelectedCampaignId() {
@@ -176,8 +243,10 @@ campaignCards.addEventListener("click", async (e) => {
   const id =
     btn.dataset.open ||
     btn.dataset.duplicate ||
+    btn.dataset.start ||
     btn.dataset.pause ||
     btn.dataset.resume ||
+    btn.dataset.stop ||
     btn.dataset.deleteCampaign;
   if (!id) {
     return;
@@ -191,13 +260,41 @@ campaignCards.addEventListener("click", async (e) => {
       await api(`/api/campaigns/${id}/duplicate`, { method: "POST" });
       showToast("Campaign duplicated");
       await loadCampaignCards();
+    } else if (btn.dataset.start) {
+      await api(`/api/campaigns/${id}/start`, { method: "POST" });
+      if (state.selectedCampaignId === Number(id)) {
+        state.execution = await api(`/api/campaigns/${id}/execution`);
+        renderExecutionStatus();
+        await loadAttempts(Number(id));
+      }
+      showToast("Campaign started");
+      await loadCampaignCards();
     } else if (btn.dataset.pause) {
       await api(`/api/campaigns/${id}/pause`, { method: "POST" });
+      if (state.selectedCampaignId === Number(id)) {
+        state.execution = await api(`/api/campaigns/${id}/execution`);
+        renderExecutionStatus();
+        await loadAttempts(Number(id));
+      }
       showToast("Campaign paused");
       await loadCampaignCards();
     } else if (btn.dataset.resume) {
       await api(`/api/campaigns/${id}/resume`, { method: "POST" });
+      if (state.selectedCampaignId === Number(id)) {
+        state.execution = await api(`/api/campaigns/${id}/execution`);
+        renderExecutionStatus();
+        await loadAttempts(Number(id));
+      }
       showToast("Campaign resumed");
+      await loadCampaignCards();
+    } else if (btn.dataset.stop) {
+      await api(`/api/campaigns/${id}/stop`, { method: "POST" });
+      if (state.selectedCampaignId === Number(id)) {
+        state.execution = await api(`/api/campaigns/${id}/execution`);
+        renderExecutionStatus();
+        await loadAttempts(Number(id));
+      }
+      showToast("Campaign stopped");
       await loadCampaignCards();
     } else if (btn.dataset.deleteCampaign) {
       await api(`/api/campaigns/${id}`, { method: "DELETE" });
@@ -208,6 +305,43 @@ campaignCards.addEventListener("click", async (e) => {
       showToast("Campaign deleted");
       await loadCampaignCards();
     }
+  } catch (err) {
+    showToast(err.message);
+  }
+});
+
+policyForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const campaignId = getSelectedCampaignId();
+    const form = new FormData(e.target);
+    const payload = {
+      window_start_hour: Number(form.get("window_start_hour")),
+      window_end_hour: Number(form.get("window_end_hour")),
+      max_attempts: Number(form.get("max_attempts")),
+      retry_delay_minutes: Number(form.get("retry_delay_minutes")),
+      cooldown_hours: Number(form.get("cooldown_hours")),
+      max_calls_per_minute: Number(form.get("max_calls_per_minute")),
+      enabled: form.get("enabled") === "on",
+    };
+
+    state.policy = await api(`/api/campaigns/${campaignId}/policy`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    });
+    renderPolicyForm();
+    showToast("Calling policy saved");
+  } catch (err) {
+    showToast(err.message);
+  }
+});
+
+refreshAttemptsButton.addEventListener("click", async () => {
+  try {
+    const campaignId = getSelectedCampaignId();
+    await loadAttempts(campaignId);
+    showToast("Attempts refreshed");
   } catch (err) {
     showToast(err.message);
   }
