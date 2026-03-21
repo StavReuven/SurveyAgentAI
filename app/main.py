@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 from datetime import datetime, timezone
@@ -6,12 +7,15 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
 from .models import BranchRule, Campaign, Participant, Question
+from .voice.dialogue.fsm import QuestionContext
+from .voice.pipeline import VoicePipeline
 from .schemas import (
     CampaignCreate,
     CampaignOut,
@@ -42,6 +46,11 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 @app.get("/")
 def index():
     return FileResponse("app/static/index.html")
+
+
+@app.get("/voice")
+def voice_simulator():
+    return FileResponse("app/static/voice.html")
 
 
 @app.get("/api/health")
@@ -406,3 +415,178 @@ def list_participants(campaign_id: int, db: Session = Depends(get_db)):
         .order_by(Participant.id.desc())
         .all()
     )
+
+
+# ===========================================================================
+# SAA-50: Voice AI Pipeline endpoints
+# ===========================================================================
+
+# In-memory session store (keyed by session_id).
+# In production this would be Redis or a DB table.
+_voice_sessions: dict[str, dict] = {}
+
+_pipeline = VoicePipeline()
+
+
+class VoiceSessionStartRequest(BaseModel):
+    participant_phone: str
+    locale: str | None = None
+
+
+class VoiceTurnRequest(BaseModel):
+    transcript: str          # text from caller (or forwarded from STT adapter)
+    audio_duration_ms: float = 0.0
+
+
+def _load_question_contexts(campaign_id: int, db: Session) -> list[QuestionContext]:
+    questions = (
+        db.query(Question)
+        .filter(Question.campaign_id == campaign_id)
+        .order_by(Question.order_index.asc())
+        .all()
+    )
+    return [
+        QuestionContext(
+            question_id=q.id,
+            question_key=q.key,
+            prompt=q.prompt,
+            question_type=q.question_type,
+            order_index=q.order_index,
+            config=q.config or {},
+        )
+        for q in questions
+    ]
+
+
+@app.post("/api/campaigns/{campaign_id}/voice/sessions")
+async def start_voice_session(
+    campaign_id: int,
+    payload: VoiceSessionStartRequest,
+    db: Session = Depends(get_db),
+):
+    """SAA-50/SAA-51: Start a new voice survey session for a campaign participant."""
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status != "active":
+        raise HTTPException(status_code=400, detail="Campaign is not active")
+
+    question_contexts = _load_question_contexts(campaign_id, db)
+    if not question_contexts:
+        raise HTTPException(status_code=400, detail="Campaign has no questions")
+
+    branch_rules = (
+        db.query(BranchRule)
+        .filter(BranchRule.campaign_id == campaign_id)
+        .order_by(BranchRule.priority.asc())
+        .all()
+    )
+
+    ctx = _pipeline.create_session(
+        campaign_id=campaign_id,
+        participant_phone=payload.participant_phone,
+        questions=question_contexts,
+        branch_rules=branch_rules,
+        language=campaign.language,
+        locale=payload.locale,
+    )
+
+    result = await _pipeline.start_session(ctx)
+
+    _voice_sessions[ctx.session_id] = {
+        "ctx": ctx,
+        "campaign_id": campaign_id,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "tts_metrics": [],
+        "stt_metrics": [],
+    }
+
+    return {
+        "session_id": ctx.session_id,
+        "response_text": result.response_text,
+        "dialogue_action": result.dialogue_action,
+        "current_state": result.current_state,
+        "current_question_key": result.current_question_key,
+        "session_complete": result.session_complete,
+    }
+
+
+@app.post("/api/campaigns/{campaign_id}/voice/sessions/{session_id}/turn")
+async def process_voice_turn(
+    campaign_id: int,
+    session_id: str,
+    payload: VoiceTurnRequest,
+):
+    """SAA-50: Process one caller turn (transcript text → dialogue → TTS response)."""
+    session = _voice_sessions.get(session_id)
+    if not session or session["campaign_id"] != campaign_id:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+
+    ctx = session["ctx"]
+
+    # Wrap the provided transcript as an async generator of bytes so the
+    # STT adapter's interface is satisfied (mock adapter ignores audio bytes
+    # and uses preset responses; real adapters would receive actual audio).
+    async def _text_as_audio_chunks():
+        yield payload.transcript.encode()
+
+    # Override mock STT to return the submitted transcript directly
+    from .voice.stt.adapter import MockSTTAdapter
+    _pipeline._stt = MockSTTAdapter(
+        responses=[payload.transcript],
+        confidence=0.92,
+    )
+
+    result = await _pipeline.process_turn(ctx, _text_as_audio_chunks())
+
+    session["tts_metrics"].append(result.tts_metrics)
+    session["stt_metrics"].append(result.stt_metrics)
+
+    if result.session_complete:
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+        session["answers"] = dict(ctx.answers)
+
+    return {
+        "session_id": session_id,
+        "response_text": result.response_text,
+        "dialogue_action": result.dialogue_action,
+        "current_state": result.current_state,
+        "current_question_key": result.current_question_key,
+        "session_complete": result.session_complete,
+        "stt_metrics": result.stt_metrics,
+        "tts_metrics": result.tts_metrics,
+    }
+
+
+@app.get("/api/campaigns/{campaign_id}/voice/sessions/{session_id}")
+def get_voice_session(campaign_id: int, session_id: str):
+    """SAA-50: Get current state of a voice session."""
+    session = _voice_sessions.get(session_id)
+    if not session or session["campaign_id"] != campaign_id:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+
+    ctx = session["ctx"]
+    return {
+        "session_id": session_id,
+        "campaign_id": campaign_id,
+        "participant_phone": ctx.participant_phone,
+        "current_state": ctx.state,
+        "current_question_index": ctx.current_question_index,
+        "current_question_key": (ctx.current_question.question_key if ctx.current_question else None),
+        "answers": dict(ctx.answers),
+        "retry_count": ctx.retry_count,
+        "started_at": session["started_at"],
+        "completed_at": session.get("completed_at"),
+        "tts_metrics_summary": session["tts_metrics"],
+        "stt_metrics_summary": session["stt_metrics"],
+        "history": ctx.history,
+    }
+
+
+@app.delete("/api/campaigns/{campaign_id}/voice/sessions/{session_id}")
+def end_voice_session(campaign_id: int, session_id: str):
+    """SAA-50: Terminate and discard a voice session."""
+    session = _voice_sessions.pop(session_id, None)
+    if not session or session["campaign_id"] != campaign_id:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+    return {"ended": True, "session_id": session_id}
