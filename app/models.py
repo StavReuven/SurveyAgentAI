@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -130,7 +131,6 @@ class Participant(Base):
         UniqueConstraint("campaign_id", "phone_number", name="uq_campaign_phone"),
     )
 
-
 class CampaignExecution(Base):
     __tablename__ = "campaign_executions"
 
@@ -207,3 +207,30 @@ class CallAttempt(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class CallLog(Base):
+    """SAA-101/SAA-105: Persisted record of every voice call session."""
+
+    __tablename__ = "call_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    participant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("participants.id"), nullable=True, index=True
+    )
+    session_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(
+        Enum("active", "completed", "not_now", "failed", "escalated", name="call_status"),
+        default="active",
+        nullable=False,
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    turns_count: Mapped[int] = mapped_column(Integer, default=0)
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    rapport_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    campaign: Mapped["Campaign"] = relationship("Campaign")

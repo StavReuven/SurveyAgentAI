@@ -245,24 +245,34 @@
     }
     .qr:hover { border-color: #38bdf8; color: #38bdf8; }
 
-    /* ── Right panel: metrics ────────────────── */
-    .metrics-panel {
-      width: 260px;
-      min-width: 260px;
-      background: #1e293b;
-      border-left: 1px solid #334155;
-      overflow-y: auto;
+    /* ── Mic button ──────────────────────────── */
+    #mic-btn {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      border: none;
+      background: #0f172a;
+      color: #64748b;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .15s;
+      flex-shrink: 0;
     }
-    .metric-section { padding: 12px 16px; border-bottom: 1px solid #334155; }
-    .metric-section-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #64748b; margin-bottom: 10px; }
-    .metric-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
-    .metric-row .mk { color: #64748b; }
-    .metric-row .mv { color: #e2e8f0; font-variant-numeric: tabular-nums; }
-    .metric-row .mv.good  { color: #4ade80; }
-    .metric-row .mv.warn  { color: #fbbf24; }
-    .history-item { font-size: 11px; color: #64748b; margin-bottom: 5px; display: flex; gap: 6px; }
-    .history-item .hi-ev { color: #94a3b8; }
-    .history-item .hi-st { color: #38bdf8; font-size: 10px; }
+    #mic-btn:hover:not(:disabled) { background: #1e293b; color: #e2e8f0; }
+    #mic-btn.listening {
+      background: #dc2626;
+      color: #fff;
+      animation: mic-pulse 1s infinite;
+    }
+    #mic-btn:disabled { opacity: .3; cursor: default; }
+    @keyframes mic-pulse {
+      0%,100% { box-shadow: 0 0 0 0 #dc262666; }
+      50%      { box-shadow: 0 0 0 8px #dc262600; }
+    }
+    .listening-indicator {
+      font-size: 11px; color: #dc2626; font-style: italic;
+      padding: 0 4px;
+    }
 
     /* scrollbar */
     ::-webkit-scrollbar { width: 5px; }
@@ -278,7 +288,9 @@
     <div class="subtitle">SAA-50 · Call Simulator</div>
   </div>
   <a href="/">← Campaign Builder</a>
+  <a href="/dashboard">Dashboard</a>
   <a href="/docs" target="_blank">API Docs ↗</a>
+  <button id="voice-toggle" onclick="toggleVoice()" style="margin-left:8px;background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">🔊 Voice ON</button>
 </header>
 
 <div class="app">
@@ -347,39 +359,10 @@
     </div>
 
     <div class="input-bar">
-      <input id="caller-input" type="text" placeholder="Type what the caller says…" disabled />
+      <button id="mic-btn" disabled title="Hold to speak">🎤</button>
+      <input id="caller-input" type="text" placeholder="Speak or type your reply…" disabled />
+      <span class="listening-indicator" id="listen-label" style="display:none">Listening…</span>
       <button id="send-btn" disabled>Send</button>
-    </div>
-  </div>
-
-  <!-- RIGHT: Metrics -->
-  <div class="metrics-panel">
-    <div class="panel-title">Metrics & Logs</div>
-
-    <div class="metric-section">
-      <div class="metric-section-title">STT (Speech-to-Text)</div>
-      <div class="metric-row"><span class="mk">Total processing</span><span class="mv" id="m-stt-total">—</span></div>
-      <div class="metric-row"><span class="mk">Audio duration</span><span class="mv" id="m-stt-audio">—</span></div>
-      <div class="metric-row"><span class="mk">Realtime factor</span><span class="mv" id="m-stt-rtf">—</span></div>
-      <div class="metric-row"><span class="mk">Chars recognised</span><span class="mv" id="m-stt-chars">—</span></div>
-    </div>
-
-    <div class="metric-section">
-      <div class="metric-section-title">NLU Intent</div>
-      <div class="metric-row"><span class="mk">Intent</span><span class="mv" id="m-intent">—</span></div>
-      <div class="metric-row"><span class="mk">Action</span><span class="mv" id="m-action">—</span></div>
-    </div>
-
-    <div class="metric-section">
-      <div class="metric-section-title">TTS (Text-to-Speech)</div>
-      <div class="metric-row"><span class="mk">Latency</span><span class="mv" id="m-tts-lat">—</span></div>
-      <div class="metric-row"><span class="mk">Audio duration</span><span class="mv" id="m-tts-audio">—</span></div>
-      <div class="metric-row"><span class="mk">Characters</span><span class="mv" id="m-tts-chars">—</span></div>
-    </div>
-
-    <div class="metric-section">
-      <div class="metric-section-title">Event Log</div>
-      <div id="event-log"></div>
     </div>
   </div>
 
@@ -390,6 +373,31 @@ const API = '';   // same origin
 let sessionId = null;
 let campaignId = null;
 let turnCount = 0;
+
+// ── Web Speech API (browser TTS) ─────────────────────────────────────────────
+const synth = window.speechSynthesis;
+let voiceEnabled = true;
+let selectedVoice = null;
+
+function loadVoices() {
+  const voices = synth.getVoices();
+  // prefer English voices
+  selectedVoice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
+                  voices.find(v => v.lang.startsWith('en')) ||
+                  voices[0] || null;
+}
+loadVoices();
+if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = loadVoices;
+
+function speak(text) {
+  if (!voiceEnabled || !synth) return;
+  synth.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.voice = selectedVoice;
+  utt.rate  = 0.95;
+  utt.pitch = 1.0;
+  synth.speak(utt);
+}
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 async function loadCampaigns() {
@@ -422,7 +430,8 @@ function fmt(ms) {
 }
 
 function stateBadge(state) {
-  return `<span class="badge badge-${state}">${state}</span>`;
+  const s = (state || 'unknown').split('.').pop().toLowerCase();
+  return `<span class="badge badge-${s}">${s}</span>`;
 }
 
 function addBubble(role, text, actionTag) {
@@ -451,29 +460,60 @@ function addBubble(role, text, actionTag) {
   t.scrollTop = t.scrollHeight;
 }
 
-function logEvent(text) {
-  const log = document.getElementById('event-log');
-  const d = document.createElement('div');
-  d.className = 'history-item';
-  d.innerHTML = `<span class="hi-st">${new Date().toLocaleTimeString()}</span><span class="hi-ev">${text}</span>`;
-  log.appendChild(d);
-  log.scrollTop = log.scrollHeight;
+// ── Web Speech Recognition (mic input) ───────────────────────────────────────
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    isListening = true;
+    document.getElementById('mic-btn').classList.add('listening');
+    document.getElementById('listen-label').style.display = 'inline';
+    document.getElementById('caller-input').value = '';
+    document.getElementById('caller-input').placeholder = 'Listening…';
+  };
+
+  recognition.onresult = (e) => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t;
+      else interim += t;
+    }
+    document.getElementById('caller-input').value = final || interim;
+  };
+
+  recognition.onend = () => {
+    isListening = false;
+    document.getElementById('mic-btn').classList.remove('listening');
+    document.getElementById('listen-label').style.display = 'none';
+    document.getElementById('caller-input').placeholder = 'Speak or type your reply…';
+    const text = document.getElementById('caller-input').value.trim();
+    if (text) sendTurn();
+  };
+
+  recognition.onerror = () => {
+    isListening = false;
+    document.getElementById('mic-btn').classList.remove('listening');
+    document.getElementById('listen-label').style.display = 'none';
+    document.getElementById('caller-input').placeholder = 'Speak or type your reply…';
+  };
 }
 
-function updateMetrics(turn) {
-  const s = turn.stt_metrics || {};
-  const t = turn.tts_metrics || {};
-
-  document.getElementById('m-stt-total').textContent  = fmt(s.total_processing_ms);
-  document.getElementById('m-stt-audio').textContent  = fmt(s.audio_duration_ms);
-  document.getElementById('m-stt-rtf').textContent    = s.realtime_factor != null ? s.realtime_factor.toFixed(3) : '—';
-  document.getElementById('m-stt-chars').textContent  = s.characters_recognised ?? '—';
-  document.getElementById('m-tts-lat').textContent    = fmt(t.synthesis_latency_ms);
-  document.getElementById('m-tts-audio').textContent  = fmt(t.audio_duration_ms);
-  document.getElementById('m-tts-chars').textContent  = t.character_count ?? '—';
-  document.getElementById('m-intent').textContent     = turn.stt_metrics ? '(see action)' : '—';
-  document.getElementById('m-action').textContent     = (turn.dialogue_action || '—').replace(/_/g, ' ');
-}
+document.getElementById('mic-btn').addEventListener('click', () => {
+  if (!recognition) return;
+  if (isListening) {
+    recognition.stop();
+  } else {
+    recognition.lang = document.getElementById('locale-input').value || 'en-US';
+    recognition.start();
+  }
+});
 
 function updateState(data) {
   document.getElementById('s-state').innerHTML    = stateBadge(data.current_state || 'unknown');
@@ -510,7 +550,6 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   // clear transcript
   const t = document.getElementById('transcript');
   t.innerHTML = '';
-  document.getElementById('event-log').innerHTML = '';
   document.getElementById('answers-box').style.display = 'none';
 
   const dot = document.getElementById('status-dot');
@@ -532,10 +571,9 @@ document.getElementById('start-btn').addEventListener('click', async () => {
 
     sessionId = data.session_id;
     addBubble('bot', data.response_text, data.dialogue_action.replace(/_/g,' '));
+    speak(data.response_text);
     updateState(data);
-    logEvent(`Session started: ${sessionId.slice(0,8)}…`);
-    logEvent(`Action: ${data.dialogue_action}`);
-
+    document.getElementById('mic-btn').disabled = false;
     document.getElementById('caller-input').focus();
   } catch (e) {
     alert('Error: ' + e.message);
@@ -566,9 +604,8 @@ async function sendTurn() {
     if (!res.ok) throw new Error(data.detail || 'Turn failed');
 
     addBubble('bot', data.response_text, data.dialogue_action.replace(/_/g,' '));
+    speak(data.response_text);
     updateState(data);
-    updateMetrics(data);
-    logEvent(`Intent→ ${data.dialogue_action.replace(/_/g,' ')}`);
 
     // fetch full state for answers + retries
     const stRes = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
@@ -583,7 +620,7 @@ async function sendTurn() {
       return;
     }
   } catch (e) {
-    logEvent('Error: ' + e.message);
+    addBubble('bot', 'Error: ' + e.message);
   }
 
   inp.disabled = false;
@@ -609,7 +646,6 @@ async function endCall(completed) {
   dot.className = 'call-status-dot done';
   document.getElementById('ci-main').textContent = completed ? '✅ Call completed' : '⬛ Call ended';
   document.getElementById('ci-sub').textContent  = `${turnCount} turn(s) · session ${(sessionId||'').slice(0,8)}…`;
-  logEvent(completed ? 'Session complete — all questions answered' : 'Session ended by operator');
   resetUI();
   sessionId = null;
 }
@@ -619,6 +655,17 @@ function resetUI() {
   document.getElementById('end-btn').disabled = true;
   document.getElementById('caller-input').disabled = true;
   document.getElementById('send-btn').disabled = true;
+  document.getElementById('mic-btn').disabled = true;
+  if (recognition && isListening) recognition.stop();
+  synth.cancel();
+}
+
+function toggleVoice() {
+  voiceEnabled = !voiceEnabled;
+  const btn = document.getElementById('voice-toggle');
+  btn.textContent = voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+  btn.style.color = voiceEnabled ? '#4ade80' : '#64748b';
+  if (!voiceEnabled) synth.cancel();
 }
 </script>
 </body>

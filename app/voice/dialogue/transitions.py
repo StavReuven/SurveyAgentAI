@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 from .fallbacks import FallbackConfig, FallbackHandler
 from .fsm import DialogueAction, DialogueState, FSMContext
 from ..nlu.schema import Intent, IntentType
+
+_ANY_NUMBER_RE = re.compile(r"\b(\d+(?:\.\d+)?)\b")
 
 
 class DialogueManager:
@@ -78,8 +82,8 @@ class DialogueManager:
         if intent.intent_type == IntentType.ANSWER:
             return self._handle_answer(ctx, intent)
 
-        # Unknown / low confidence
-        return self._fallback.handle(ctx)
+        # Unknown / low confidence — use a context-aware hint when possible
+        return self._fallback.handle(ctx, self._validation_hint(intent.raw_text or "", q))
 
     def _handle_repeating(
         self, ctx: FSMContext, intent: Intent
@@ -220,6 +224,36 @@ class DialogueManager:
     # -----------------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------------
+
+    def _validation_hint(self, raw_text: str, q) -> str | None:
+        """Return a specific error message based on the question type and invalid input."""
+        if q is None:
+            return None
+
+        if q.question_type == "rating":
+            m = _ANY_NUMBER_RE.search(raw_text)
+            if m:
+                num_str = m.group(1)
+                try:
+                    num = float(num_str)
+                    if num < 1 or num > 10:
+                        return (
+                            f"{num_str} is out of range. "
+                            "Please say a number between 1 and 10."
+                        )
+                except ValueError:
+                    pass
+            if raw_text.strip():
+                return "That's not a valid rating. Please say a number between 1 and 10."
+            return None
+
+        if q.question_type == "mcq":
+            if raw_text.strip():
+                # Repeat the question so the caller knows the options
+                return f"I didn't catch a valid option. {q.prompt}"
+            return None
+
+        return None
 
     def _close(
         self, ctx: FSMContext, text: str
