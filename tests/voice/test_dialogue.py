@@ -261,9 +261,9 @@ class TestFallbackHandler:
         ctx = _make_ctx()
         ctx.retry_count = 3
 
-        state, action, text = handler.handle(ctx)
+        result_ctx, action, text = handler.handle(ctx)
         assert action == DialogueAction.ESCALATE
-        assert state == DialogueState.CLOSING
+        assert result_ctx.state == DialogueState.CLOSING
 
     def test_increments_retry_count(self):
         handler = FallbackHandler(FallbackConfig(max_retries=3))
