@@ -60,6 +60,7 @@
 
       <section id="builder-panel" class="panel hidden">
         <h2 id="builder-title">Campaign Builder</h2>
+        <p id="execution-status" class="hint">Execution: unknown</p>
 
         <div class="builder-grid">
           <article class="subpanel">
@@ -126,6 +127,54 @@
               <button type="submit">Upload CSV</button>
             </form>
             <ul id="participant-list" class="list"></ul>
+          </article>
+
+          <article class="subpanel">
+            <h3>Calling Policies (Windows/Retry/Cooldown)</h3>
+            <form id="policy-form" class="stack-form">
+              <div class="row">
+                <label>
+                  Window Start Hour
+                  <input name="window_start_hour" type="number" min="0" max="23" value="9" />
+                </label>
+                <label>
+                  Window End Hour
+                  <input name="window_end_hour" type="number" min="1" max="24" value="18" />
+                </label>
+              </div>
+              <div class="row">
+                <label>
+                  Max Attempts
+                  <input name="max_attempts" type="number" min="1" max="10" value="3" />
+                </label>
+                <label>
+                  Retry Delay (minutes)
+                  <input name="retry_delay_minutes" type="number" min="1" max="1440" value="30" />
+                </label>
+              </div>
+              <div class="row">
+                <label>
+                  Cooldown (hours)
+                  <input name="cooldown_hours" type="number" min="0" max="168" value="24" />
+                </label>
+                <label>
+                  Max Calls/Minute
+                  <input name="max_calls_per_minute" type="number" min="1" max="500" value="10" />
+                </label>
+              </div>
+              <label class="check">
+                <input name="enabled" type="checkbox" checked /> Policy Enabled
+              </label>
+              <button type="submit">Save Policy</button>
+            </form>
+          </article>
+
+          <article class="subpanel">
+            <h3>Execution Activity</h3>
+            <div class="actions">
+              <button id="refresh-attempts" type="button" class="alt">Refresh Attempts</button>
+            </div>
+            <ul id="attempt-list" class="list"></ul>
           </article>
         </div>
       </section>

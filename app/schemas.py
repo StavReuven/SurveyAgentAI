@@ -121,3 +121,43 @@ class CampaignSummary(BaseModel):
     status: str
     question_count: int
     participant_count: int
+
+
+class CampaignExecutionOut(BaseModel):
+    campaign_id: int
+    state: str
+    started_at: datetime | None = None
+    paused_at: datetime | None = None
+    stopped_at: datetime | None = None
+    last_tick_at: datetime | None = None
+
+
+class CallingPolicyUpdate(BaseModel):
+    window_start_hour: int = Field(ge=0, le=23)
+    window_end_hour: int = Field(ge=1, le=24)
+    max_attempts: int = Field(ge=1, le=10)
+    retry_delay_minutes: int = Field(ge=1, le=1440)
+    cooldown_hours: int = Field(ge=0, le=168)
+    max_calls_per_minute: int = Field(ge=1, le=500)
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.window_end_hour <= self.window_start_hour:
+            raise ValueError("window_end_hour must be greater than window_start_hour")
+        return self
+
+
+class CallingPolicyOut(CallingPolicyUpdate):
+    campaign_id: int
+
+
+class CallAttemptOut(BaseModel):
+    id: int
+    participant_id: int
+    participant_phone: str
+    attempt_number: int
+    outcome: str
+    started_at: datetime
+    finished_at: datetime
+    note: str | None = None
