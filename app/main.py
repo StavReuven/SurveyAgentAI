@@ -2,6 +2,7 @@ import asyncio
 import csv
 import io
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +14,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
-from .models import BranchRule, Campaign, Participant, Question
+from .models import BranchRule, CallLog, Campaign, Participant, Question
 from .voice.dialogue.fsm import QuestionContext
 from .voice.pipeline import VoicePipeline
+from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .schemas import (
     CampaignCreate,
     CampaignOut,
@@ -34,6 +36,7 @@ from .schemas import (
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0")
+app.include_router(dashboard_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -422,10 +425,12 @@ def list_participants(campaign_id: int, db: Session = Depends(get_db)):
 # ===========================================================================
 
 # In-memory session store (keyed by session_id).
-# In production this would be Redis or a DB table.
 _voice_sessions: dict[str, dict] = {}
 
 _pipeline = VoicePipeline()
+
+# Wire session store into dashboard router so live-calls endpoint can read it.
+set_live_sessions_store(_voice_sessions)
 
 
 class VoiceSessionStartRequest(BaseModel):
@@ -475,12 +480,24 @@ async def start_voice_session(
     if not question_contexts:
         raise HTTPException(status_code=400, detail="Campaign has no questions")
 
-    branch_rules = (
+    # Load branch rules and convert to plain objects so they survive session close
+    _branch_rule_rows = (
         db.query(BranchRule)
         .filter(BranchRule.campaign_id == campaign_id)
         .order_by(BranchRule.priority.asc())
         .all()
     )
+    branch_rules = [
+        SimpleNamespace(
+            source_question_id=r.source_question_id,
+            target_question_id=r.target_question_id,
+            operator=r.operator,
+            value=r.value,
+            action=r.action,
+            priority=r.priority,
+        )
+        for r in _branch_rule_rows
+    ]
 
     ctx = _pipeline.create_session(
         campaign_id=campaign_id,
@@ -501,6 +518,16 @@ async def start_voice_session(
         "stt_metrics": [],
     }
 
+    # SAA-101: persist call log for dashboard metrics
+    call_log = CallLog(
+        campaign_id=campaign_id,
+        session_id=ctx.session_id,
+        status="active",
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(call_log)
+    db.commit()
+
     return {
         "session_id": ctx.session_id,
         "response_text": result.response_text,
@@ -516,6 +543,7 @@ async def process_voice_turn(
     campaign_id: int,
     session_id: str,
     payload: VoiceTurnRequest,
+    db: Session = Depends(get_db),
 ):
     """SAA-50: Process one caller turn (transcript text → dialogue → TTS response)."""
     session = _voice_sessions.get(session_id)
@@ -545,6 +573,28 @@ async def process_voice_turn(
     if result.session_complete:
         session["completed_at"] = datetime.now(timezone.utc).isoformat()
         session["answers"] = dict(ctx.answers)
+
+    # SAA-101: update CallLog with final status + answers + rapport score
+    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+    if call_log:
+        call_log.turns_count = len(ctx.history)
+        call_log.answers = dict(ctx.answers)
+        # Rapport = avg turn confidence from history
+        confidences = [
+            e["confidence"] for e in ctx.history
+            if e.get("event") == "turn" and "confidence" in e and e["confidence"] > 0
+        ]
+        call_log.rapport_score = round(sum(confidences) / len(confidences), 2) if confidences else None
+        if result.session_complete:
+            call_log.ended_at = datetime.now(timezone.utc)
+            action = str(result.dialogue_action)
+            if "escalat" in action:
+                call_log.status = "escalated"
+            elif "closing" in action or "end" in action:
+                call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
+            else:
+                call_log.status = "completed"
+        db.commit()
 
     return {
         "session_id": session_id,
@@ -584,9 +634,20 @@ def get_voice_session(campaign_id: int, session_id: str):
 
 
 @app.delete("/api/campaigns/{campaign_id}/voice/sessions/{session_id}")
-def end_voice_session(campaign_id: int, session_id: str):
+def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(get_db)):
     """SAA-50: Terminate and discard a voice session."""
     session = _voice_sessions.pop(session_id, None)
     if not session or session["campaign_id"] != campaign_id:
         raise HTTPException(status_code=404, detail="Voice session not found")
+    # Mark any still-active CallLog as failed
+    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+    if call_log and call_log.status == "active":
+        call_log.status = "failed"
+        call_log.ended_at = datetime.now(timezone.utc)
+        db.commit()
     return {"ended": True, "session_id": session_id}
+
+
+@app.get("/dashboard")
+def dashboard():
+    return FileResponse("app/static/dashboard.html")

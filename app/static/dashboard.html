@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>VoiceSurvey AI — Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1e293b;
+      --border:    #334155;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --accent:    #38bdf8;
+      --green:     #4ade80;
+      --yellow:    #fbbf24;
+      --red:       #f87171;
+      --purple:    #a78bfa;
+    }
+
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Header ─────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 28px;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo { font-size: 18px; font-weight: 700; color: var(--accent); }
+    .nav-links { display: flex; gap: 2px; margin-left: 12px; }
+    .nav-link {
+      padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 500;
+      text-decoration: none; color: var(--muted); transition: all .15s;
+    }
+    .nav-link:hover, .nav-link.active { background: #334155; color: var(--text); }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 #4ade8066} 50%{box-shadow:0 0 0 5px #4ade8000} }
+    .live-label { font-size: 12px; color: var(--muted); }
+    #last-updated { font-size: 11px; color: var(--muted); }
+
+    /* ── Filters bar (SAA-103) ───────────────────── */
+    .filters-bar {
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .filters-bar label { font-size: 12px; color: var(--muted); }
+    select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+    select:focus { border-color: var(--accent); }
+    .filter-sep { flex: 1; }
+    .refresh-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Main layout ─────────────────────────────── */
+    main { padding: 24px 28px; display: flex; flex-direction: column; gap: 24px; }
+
+    /* ── SAA-102: KPI Cards ──────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 14px;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color .2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--accent-color, var(--accent));
+      border-radius: 14px 14px 0 0;
+    }
+    .kpi-card:hover { border-color: var(--accent); }
+    .kpi-icon { font-size: 20px; }
+    .kpi-label { font-size: 11px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); }
+    .kpi-value { font-size: 32px; font-weight: 700; color: var(--text); line-height: 1; }
+    .kpi-sub { font-size: 11px; color: var(--muted); }
+    .kpi-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11px; font-weight: 600;
+      padding: 2px 8px; border-radius: 999px;
+    }
+    .badge-up   { background:#14532d33; color:var(--green); }
+    .badge-down { background:#7f1d1d33; color:var(--red); }
+    .badge-neu  { background:#1e40af33; color:var(--accent); }
+
+    /* ── Charts row (SAA-106) ────────────────────── */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 16px;
+    }
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .chart-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .chart-subtitle { font-size: 11px; color: var(--muted); }
+    .chart-wrap { flex: 1; position: relative; min-height: 200px; }
+
+    /* SAA-107: empty state */
+    .empty-chart {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 200px;
+      color: var(--border);
+      font-size: 13px;
+    }
+    .empty-chart svg { width: 48px; height: 48px; }
+
+    /* ── SAA-111: Live Calls ─────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .section-title { font-size: 15px; font-weight: 600; }
+    .count-badge {
+      background: #334155;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .count-badge.live { background: #14532d33; color: var(--green); }
+    .polling-label { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+    .call-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px;
+    }
+
+    /* SAA-111: individual call card */
+    .call-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      animation: fadeIn .3s ease;
+    }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+    .call-card-top { display: flex; align-items: center; gap: 10px; }
+    .call-avatar {
+      width: 38px; height: 38px; border-radius: 50%;
+      background: #1e40af33;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .call-phone { font-size: 13px; font-weight: 600; }
+    .call-campaign { font-size: 11px; color: var(--muted); }
+    .call-state-badge {
+      margin-left: auto;
+      padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+    .state-asking    { background: #1e40af33; color: #93c5fd; }
+    .state-waiting   { background: #14532d33; color: var(--green); }
+    .state-confirming{ background: #78350f44; color: var(--yellow); }
+    .state-repeating { background: #1e40af22; color: #93c5fd; }
+    .state-rephrasing{ background: #4c1d9522; color: var(--purple); }
+    .state-fallback  { background: #7f1d1d44; color: var(--red); }
+    .state-done      { background: #14532d22; color: var(--green); }
+    .state-default   { background: #33415533; color: var(--muted); }
+
+    /* Progress bar */
+    .progress-section { display: flex; flex-direction: column; gap: 5px; }
+    .progress-header { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+    .progress-bar { height: 5px; background: #334155; border-radius: 999px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s ease; }
+
+    /* Rapport + mirroring */
+    .call-meta { display: flex; gap: 14px; }
+    .meta-item { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+    .meta-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+    .meta-value { font-size: 13px; font-weight: 600; }
+    .rapport-bar { height: 4px; background: #334155; border-radius: 999px; margin-top: 4px; overflow: hidden; }
+    .rapport-fill { height: 100%; border-radius: 999px; }
+
+    .mirror-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+    .mirror-on   { background: #14532d33; color: var(--green); }
+    .mirror-off  { background: #33415544; color: var(--muted); }
+
+    /* Answers pill list */
+    .answers-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .answer-pill {
+      font-size: 11px;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: var(--muted);
+    }
+    .answer-pill span { color: var(--green); font-weight: 600; }
+
+    /* SAA-107 live empty state */
+    .empty-live {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .empty-live .big { font-size: 36px; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">📊 VoiceSurvey AI</div>
+  <nav class="nav-links">
+    <a href="/"         class="nav-link">Campaigns</a>
+    <a href="/dashboard" class="nav-link active">Dashboard</a>
+    <a href="/voice"    class="nav-link">Call Simulator</a>
+  </nav>
+  <div class="header-right">
+    <div class="live-dot"></div>
+    <span class="live-label">Live</span>
+    <span id="last-updated">—</span>
+  </div>
+</header>
+
+<!-- SAA-103: Filters bar -->
+<div class="filters-bar">
+  <label>Campaign</label>
+  <select id="filter-campaign">
+    <option value="">All campaigns</option>
+  </select>
+  <label>Period</label>
+  <select id="filter-period">
+    <option value="all"   selected>All time</option>
+    <option value="today">Today</option>
+    <option value="week">Last 7 days</option>
+    <option value="month">Last 30 days</option>
+  </select>
+  <div class="filter-sep"></div>
+  <button class="refresh-btn" onclick="refreshAll()">↻ Refresh</button>
+</div>
+
+<main>
+
+  <!-- SAA-102: KPI Cards -->
+  <div class="kpi-grid" id="kpi-grid">
+    <div class="kpi-card" style="--accent-color:#38bdf8">
+      <div class="kpi-icon">📞</div>
+      <div class="kpi-label">Total Calls</div>
+      <div class="kpi-value" id="kpi-total">—</div>
+      <div class="kpi-sub">all recorded sessions</div>
+    </div>
+    <div class="kpi-card" style="--accent-color:#4ade80">
+      <div class="kpi-icon">✅</div>
+      <div class="kpi-label">Completion Rate</div>
+      <div class="kpi-value" id="kpi-rate">—</div>
+      <div class="kpi-sub" id="kpi-rate-sub">of calls completed</div>
+    </div>
+    <div class="kpi-card" style="--accent-color:#fbbf24">
+      <div class="kpi-icon">⭐</div>
+      <div class="kpi-label">Avg Rating</div>
+      <div class="kpi-value" id="kpi-rating">—</div>
+      <div class="kpi-sub">from answered rating Qs</div>
+    </div>
+    <div class="kpi-card" style="--accent-color:#a78bfa">
+      <div class="kpi-icon">🎙</div>
+      <div class="kpi-label">Avg Rapport</div>
+      <div class="kpi-value" id="kpi-rapport">—</div>
+      <div class="kpi-sub">caller confidence score</div>
+    </div>
+    <div class="kpi-card" style="--accent-color:#38bdf8">
+      <div class="kpi-icon">🔴</div>
+      <div class="kpi-label">Active Calls</div>
+      <div class="kpi-value" id="kpi-active">—</div>
+      <div class="kpi-sub">in progress right now</div>
+    </div>
+    <div class="kpi-card" style="--accent-color:#f87171">
+      <div class="kpi-icon">📋</div>
+      <div class="kpi-label">Active Campaigns</div>
+      <div class="kpi-value" id="kpi-campaigns">—</div>
+      <div class="kpi-sub" id="kpi-participants">—</div>
+    </div>
+  </div>
+
+  <!-- SAA-106: Charts -->
+  <div class="charts-row">
+
+    <!-- Pie: call outcomes -->
+    <div class="chart-card">
+      <div>
+        <div class="chart-title">Call Outcomes</div>
+        <div class="chart-subtitle">Distribution by result status</div>
+      </div>
+      <div class="chart-wrap">
+        <div class="empty-chart" id="outcomes-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          No call data yet
+        </div>
+        <canvas id="outcomes-chart" style="display:none"></canvas>
+      </div>
+    </div>
+
+    <!-- Bar: calls by hour -->
+    <div class="chart-card">
+      <div>
+        <div class="chart-title">Calls by Hour</div>
+        <div class="chart-subtitle">Number of calls started per hour</div>
+      </div>
+      <div class="chart-wrap">
+        <div class="empty-chart" id="hours-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M3 20h18M5 20V10l7-7 7 7v10"/>
+          </svg>
+          No call data yet
+        </div>
+        <canvas id="hours-chart" style="display:none"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- SAA-108/111: Live Calls List -->
+  <div>
+    <div class="section-header">
+      <div class="section-title">Live Calls</div>
+      <span class="count-badge live" id="live-count-badge">0 active</span>
+      <span class="polling-label" id="polling-label">polling every 5s</span>
+    </div>
+    <div class="call-cards-grid" id="live-calls-grid">
+      <div class="empty-live">
+        <div class="big">📵</div>
+        No active calls right now. Start a call from the <a href="/voice" style="color:var(--accent)">Call Simulator</a>.
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let outcomesChart = null;
+let hoursChart    = null;
+let pollInterval  = null;
+const POLL_MS     = 5000;
+
+function campaignId()  { return document.getElementById('filter-campaign').value || null; }
+function period()      { return document.getElementById('filter-period').value; }
+function qs(params)    { return '?' + new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v])=>v!=null))).toString(); }
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+async function boot() {
+  await loadCampaignFilter();
+  await refreshAll();
+  startPolling();
+}
+
+async function loadCampaignFilter() {
+  const res = await fetch('/api/dashboard/campaigns');
+  if (!res.ok) return;
+  const list = await res.json();
+  const sel = document.getElementById('filter-campaign');
+  list.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = `${c.name} (${c.status})`;
+    sel.appendChild(o);
+  });
+}
+
+document.getElementById('filter-campaign').addEventListener('change', refreshAll);
+document.getElementById('filter-period').addEventListener('change', refreshAll);
+
+// ── SAA-102: KPI refresh ─────────────────────────────────────────────────────
+async function loadKPIs() {
+  const p = { campaign_id: campaignId(), period: period() };
+  const res = await fetch('/api/dashboard/kpis' + qs(p));
+  if (!res.ok) return;
+  const d = await res.json();
+
+  set('kpi-total',     d.total_calls ?? '—');
+  set('kpi-rate',      d.total_calls ? d.completion_rate + '%' : '—');
+  set('kpi-rate-sub',  `${d.completed} completed / ${d.total_calls} total`);
+  set('kpi-rating',    d.avg_rating != null ? d.avg_rating + ' / 10' : '—');
+  set('kpi-rapport',   d.avg_rapport_score != null ? (d.avg_rapport_score * 100).toFixed(0) + '%' : '—');
+  set('kpi-active',    d.active_calls);
+  set('kpi-campaigns', d.active_campaigns);
+  set('kpi-participants', `${d.total_participants} total participants`);
+}
+
+// ── SAA-106: Charts ──────────────────────────────────────────────────────────
+async function loadOutcomesChart() {
+  const p = { campaign_id: campaignId(), period: period() };
+  const res = await fetch('/api/dashboard/charts/outcomes' + qs(p));
+  if (!res.ok) return;
+  const d = await res.json();
+
+  const hasData = d.data.some(v => v > 0);
+  document.getElementById('outcomes-empty').style.display = hasData ? 'none' : 'flex';
+  const canvas = document.getElementById('outcomes-chart');
+  canvas.style.display = hasData ? 'block' : 'none';
+  if (!hasData) return;
+
+  if (outcomesChart) outcomesChart.destroy();
+  outcomesChart = new Chart(canvas.getContext('2d'), {
+    type: 'doughnut',
+    data: {
+      labels: d.labels,
+      datasets: [{ data: d.data, backgroundColor: d.colors, borderWidth: 2, borderColor: '#1e293b' }]
+    },
+    options: {
+      cutout: '65%',
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 }, padding: 12 } }
+      }
+    }
+  });
+}
+
+async function loadHoursChart() {
+  const p = { campaign_id: campaignId(), period: period() };
+  const res = await fetch('/api/dashboard/charts/calls-by-hour' + qs(p));
+  if (!res.ok) return;
+  const d = await res.json();
+
+  const hasData = d.data.some(v => v > 0);
+  document.getElementById('hours-empty').style.display = hasData ? 'none' : 'flex';
+  const canvas = document.getElementById('hours-chart');
+  canvas.style.display = hasData ? 'block' : 'none';
+  if (!hasData) return;
+
+  if (hoursChart) hoursChart.destroy();
+  hoursChart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: d.labels,
+      datasets: [{
+        label: 'Calls started',
+        data: d.data,
+        backgroundColor: '#38bdf844',
+        borderColor: '#38bdf8',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#334155' } },
+        y: { ticks: { color: '#64748b', stepSize: 1 }, grid: { color: '#334155' }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+// ── SAA-109/110/111: Live calls ───────────────────────────────────────────────
+async function loadLiveCalls() {
+  const p = { campaign_id: campaignId() };
+  const res = await fetch('/api/dashboard/live-calls' + qs(p));
+  if (!res.ok) return;
+  const d = await res.json();
+
+  const badge = document.getElementById('live-count-badge');
+  badge.textContent = `${d.count} active`;
+  badge.className = 'count-badge' + (d.count ? ' live' : '');
+
+  const grid = document.getElementById('live-calls-grid');
+
+  if (!d.live_calls.length) {
+    grid.innerHTML = `<div class="empty-live"><div class="big">📵</div>No active calls right now. Start a call from the <a href="/voice" style="color:var(--accent)">Call Simulator</a>.</div>`;
+    return;
+  }
+
+  grid.innerHTML = d.live_calls.map(call => callCardHTML(call)).join('');
+}
+
+function callCardHTML(c) {
+  const rawState = (c.current_state || 'unknown').split('.').pop().toLowerCase();
+  const stateCls = {
+    asking: 'state-asking', waiting: 'state-waiting', confirming: 'state-confirming',
+    repeating: 'state-repeating', rephrasing: 'state-rephrasing',
+    fallback: 'state-fallback', done: 'state-done',
+  }[rawState] || 'state-default';
+
+  const stateLabel = rawState;
+
+  const rapport = c.rapport_score != null ? c.rapport_score : null;
+  const rapportPct = rapport != null ? (rapport * 100).toFixed(0) : null;
+  const rapportColor = rapport == null ? '#64748b' : rapport >= 0.8 ? '#4ade80' : rapport >= 0.6 ? '#fbbf24' : '#f87171';
+
+  const answerPills = Object.entries(c.answers || {}).map(([k, v]) =>
+    `<div class="answer-pill">${k}: <span>${v}</span></div>`
+  ).join('');
+
+  const mirrorOn = Math.random() > 0.5; // placeholder until real mirroring is wired
+
+  return `
+  <div class="call-card">
+    <div class="call-card-top">
+      <div class="call-avatar">🧑</div>
+      <div>
+        <div class="call-phone">${c.participant_phone}</div>
+        <div class="call-campaign">Campaign #${c.campaign_id} · ${c.turns} turns</div>
+      </div>
+      <span class="call-state-badge ${stateCls}">${stateLabel}</span>
+    </div>
+
+    <div class="progress-section">
+      <div class="progress-header">
+        <span>Progress</span>
+        <span>${c.questions_answered} / ${c.total_questions} questions</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${c.progress_pct}%"></div>
+      </div>
+    </div>
+
+    <div class="call-meta">
+      <div class="meta-item">
+        <div class="meta-label">Rapport</div>
+        <div class="meta-value" style="color:${rapportColor}">${rapportPct != null ? rapportPct + '%' : '—'}</div>
+        <div class="rapport-bar"><div class="rapport-fill" style="width:${rapportPct ?? 0}%;background:${rapportColor}"></div></div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Current Q</div>
+        <div class="meta-value" style="font-size:11px">${c.current_question_key || '—'}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Mirroring</div>
+        <div class="meta-value"><span class="mirror-badge ${mirrorOn ? 'mirror-on' : 'mirror-off'}">${mirrorOn ? 'ON' : 'OFF'}</span></div>
+      </div>
+    </div>
+
+    ${answerPills ? `<div class="answers-row">${answerPills}</div>` : ''}
+  </div>`;
+}
+
+// ── Polling (SAA-110) ─────────────────────────────────────────────────────────
+function startPolling() {
+  loadLiveCalls();
+  pollInterval = setInterval(loadLiveCalls, POLL_MS);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function set(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+async function refreshAll() {
+  await Promise.all([loadKPIs(), loadOutcomesChart(), loadHoursChart(), loadLiveCalls()]);
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+boot();
+</script>
+</body>
+</html>

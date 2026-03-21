@@ -73,8 +73,15 @@ _RULES: list[_Rule] = [
     ),
 ]
 
-# Rating-type answer pattern: single digit 1-10
+# Rating-type answer pattern: digit 1-10 or spoken number words
 _RATING_PATTERN = re.compile(r"\b(10|[1-9])\b")
+_RATING_WORD_PATTERN = re.compile(
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\b", re.IGNORECASE
+)
+_RATING_WORD_MAP = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
 
 # MCQ answer patterns (a/b/c/d or "option one" etc.)
 _MCQ_LETTER_PATTERN = re.compile(r"\b([a-dA-D])\b")
@@ -180,7 +187,13 @@ class RuleBasedClassifier:
     def _extract_answer(self, normalised: str, question_type: str | None) -> str | None:
         if question_type == "rating":
             m = _RATING_PATTERN.search(normalised)
-            return m.group(1) if m else None
+            if m:
+                return m.group(1)
+            # Also accept spoken number words: "five" → "5"
+            m = _RATING_WORD_PATTERN.search(normalised)
+            if m:
+                return _RATING_WORD_MAP[m.group(1).lower()]
+            return None
 
         if question_type == "mcq":
             m = _MCQ_LETTER_PATTERN.search(normalised)
