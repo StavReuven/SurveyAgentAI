@@ -1,44 +1,63 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Voice AI Pipeline — Call Simulator</title>
+  <title>Voice AI Pipeline — שיחות לייב</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      background: #f4f6fb;
+      color: #1f2a44;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      direction: rtl;
+      text-align: right;
     }
 
     /* ── Header ─────────────────────────────── */
-    header {
-      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-      border-bottom: 1px solid #334155;
-      padding: 16px 24px;
+    .top-header {
+      background: linear-gradient(90deg, #4778ff 0%, #7b3ff1 100%);
+      border-bottom: none;
+      padding: 0 28px;
+      height: 74px;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 16px 34px rgba(87, 76, 205, 0.26);
     }
-    header .logo { font-size: 22px; font-weight: 700; color: #38bdf8; letter-spacing: -0.5px; }
-    header .subtitle { font-size: 13px; color: #64748b; }
-    header a { margin-left: auto; color: #64748b; font-size: 13px; text-decoration: none; }
-    header a:hover { color: #38bdf8; }
+    .logo { font-size: 18px; font-weight: 700; color: #ffffff; }
+    .nav-links { display: flex; gap: 2px; margin-inline-start: 12px; }
+    .nav-link {
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      color: #e8ebff;
+      transition: all .15s;
+    }
+    .nav-link:hover, .nav-link.active { background: rgba(255,255,255,.2); color: #ffffff; }
+    .header-right { margin-inline-start: auto; display: flex; align-items: center; gap: 14px; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; animation: pulse 1.6s infinite; }
+    .live-label { font-size: 12px; color: #e8ebff; }
+    #last-updated { font-size: 11px; color: #dbe0ff; }
 
     /* ── Layout ─────────────────────────────── */
-    .app { display: flex; flex: 1; height: calc(100vh - 61px); overflow: hidden; }
+    .app { display: flex; flex: 1; height: calc(100vh - 74px); overflow: hidden; }
 
     /* ── Left panel: setup ───────────────────── */
     .setup-panel {
       width: 300px;
       min-width: 300px;
-      background: #1e293b;
-      border-right: 1px solid #334155;
+      background: #ffffff;
+      border-right: 1px solid #e6eaf4;
       display: flex;
       flex-direction: column;
       overflow-y: auto;
@@ -49,22 +68,22 @@
       font-weight: 600;
       letter-spacing: 1px;
       text-transform: uppercase;
-      color: #64748b;
-      border-bottom: 1px solid #334155;
+      color: #7a859f;
+      border-bottom: 1px solid #e6eaf4;
     }
     .setup-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-    label { font-size: 12px; color: #94a3b8; margin-bottom: 4px; display: block; }
+    label { font-size: 12px; color: #6f7892; margin-bottom: 4px; display: block; }
     select, input[type=text] {
       width: 100%;
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #e2e8f0;
+      background: #ffffff;
+      border: 1px solid #e6eaf4;
+      color: #1f2a44;
       padding: 8px 12px;
       border-radius: 8px;
       font-size: 14px;
       outline: none;
     }
-    select:focus, input[type=text]:focus { border-color: #38bdf8; }
+    select:focus, input[type=text]:focus { border-color: #4f6bff; }
 
     .btn {
       padding: 10px 16px;
@@ -75,8 +94,8 @@
       font-weight: 600;
       transition: all .15s;
     }
-    .btn-primary { background: #38bdf8; color: #0f172a; }
-    .btn-primary:hover:not(:disabled) { background: #7dd3fc; }
+    .btn-primary { background: #4f6bff; color: #ffffff; }
+    .btn-primary:hover:not(:disabled) { background: #4158e8; }
     .btn-danger  { background: #ef4444; color: #fff; }
     .btn-danger:hover:not(:disabled) { background: #f87171; }
     .btn:disabled { opacity: .4; cursor: default; }
@@ -84,14 +103,14 @@
     /* ── State card ─────────────────────────── */
     .state-card {
       margin: 0 16px 8px;
-      background: #0f172a;
-      border: 1px solid #334155;
+      background: #f9faff;
+      border: 1px solid #e6eaf4;
       border-radius: 10px;
       padding: 12px;
     }
     .state-card .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .state-card .row:last-child { margin-bottom: 0; }
-    .state-card .key { font-size: 11px; color: #64748b; }
+    .state-card .key { font-size: 11px; color: #7a859f; }
     .state-card .val { font-size: 12px; font-weight: 600; }
     .badge {
       padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
@@ -104,13 +123,13 @@
     .badge-fallback  { background: #7f1d1d44; color: #fca5a5; }
     .badge-done      { background: #14532d44; color: #4ade80; }
     .badge-error     { background: #7f1d1d88; color: #f87171; }
-    .badge-greeting  { background: #1e293b; color: #94a3b8; }
+    .badge-greeting  { background: #eef2ff; color: #6f7892; }
 
     /* ── Answers ─────────────────────────────── */
     .answers-box { margin: 0 16px 16px; }
-    .answers-box .a-title { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
+    .answers-box .a-title { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #7a859f; margin-bottom: 8px; }
     .answer-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
-    .answer-row .a-key { color: #64748b; flex: 1; }
+    .answer-row .a-key { color: #7a859f; flex: 1; }
     .answer-row .a-val { color: #4ade80; font-weight: 600; }
 
     /* ── Centre: call screen ─────────────────── */
@@ -122,8 +141,8 @@
     }
 
     .call-header {
-      background: #1e293b;
-      border-bottom: 1px solid #334155;
+      background: #ffffff;
+      border-bottom: 1px solid #e6eaf4;
       padding: 12px 20px;
       display: flex;
       align-items: center;
@@ -131,7 +150,7 @@
     }
     .call-status-dot {
       width: 10px; height: 10px; border-radius: 50%;
-      background: #64748b;
+      background: #a6b0cb;
       flex-shrink: 0;
     }
     .call-status-dot.active { background: #4ade80; animation: pulse 1.4s infinite; }
@@ -142,7 +161,7 @@
     }
     .call-info { flex: 1; }
     .call-info .ci-main { font-size: 14px; font-weight: 600; }
-    .call-info .ci-sub  { font-size: 11px; color: #64748b; }
+    .call-info .ci-sub  { font-size: 11px; color: #7a859f; }
 
     /* ── Transcript ─────────────────────────── */
     #transcript {
@@ -166,21 +185,21 @@
       position: relative;
     }
     .bubble.bot {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: #ffffff;
+      border: 1px solid #e6eaf4;
       border-bottom-left-radius: 4px;
-      color: #e2e8f0;
+      color: #1f2a44;
     }
     .bubble.caller {
-      background: #0369a1;
+      background: linear-gradient(90deg, #4f6bff 0%, #7b3ff1 100%);
       border-bottom-right-radius: 4px;
       color: #fff;
     }
     .bubble .action-tag {
       display: inline-block;
       font-size: 10px;
-      background: #0f172a;
-      color: #38bdf8;
+      background: #eef2ff;
+      color: #4f6bff;
       border-radius: 4px;
       padding: 1px 6px;
       margin-bottom: 4px;
@@ -199,8 +218,8 @@
 
     /* ── Input bar ───────────────────────────── */
     .input-bar {
-      border-top: 1px solid #334155;
-      background: #1e293b;
+      border-top: 1px solid #e6eaf4;
+      background: #ffffff;
       padding: 14px 20px;
       display: flex;
       gap: 10px;
@@ -208,18 +227,18 @@
     }
     #caller-input {
       flex: 1;
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #e2e8f0;
+      background: #ffffff;
+      border: 1px solid #e6eaf4;
+      color: #1f2a44;
       padding: 10px 16px;
       border-radius: 10px;
       font-size: 14px;
       outline: none;
     }
-    #caller-input:focus { border-color: #38bdf8; }
+    #caller-input:focus { border-color: #4f6bff; }
     #caller-input:disabled { opacity: .4; }
     #send-btn {
-      background: #0369a1;
+      background: #4f6bff;
       color: #fff;
       border: none;
       border-radius: 10px;
@@ -229,7 +248,7 @@
       cursor: pointer;
       transition: background .15s;
     }
-    #send-btn:hover:not(:disabled) { background: #0284c7; }
+    #send-btn:hover:not(:disabled) { background: #4158e8; }
     #send-btn:disabled { opacity: .4; cursor: default; }
 
     .quick-replies { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; padding: 0 20px; }
@@ -237,28 +256,28 @@
       font-size: 11px;
       padding: 4px 10px;
       border-radius: 999px;
-      border: 1px solid #334155;
-      background: #1e293b;
-      color: #94a3b8;
+      border: 1px solid #e6eaf4;
+      background: #f7f9ff;
+      color: #6f7892;
       cursor: pointer;
       transition: all .12s;
     }
-    .qr:hover { border-color: #38bdf8; color: #38bdf8; }
+    .qr:hover { border-color: #4f6bff; color: #4f6bff; }
 
     /* ── Mic button ──────────────────────────── */
     #mic-btn {
       width: 44px; height: 44px;
       border-radius: 50%;
       border: none;
-      background: #0f172a;
-      color: #64748b;
+      background: #eef2ff;
+      color: #7a859f;
       font-size: 20px;
       cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: all .15s;
       flex-shrink: 0;
     }
-    #mic-btn:hover:not(:disabled) { background: #1e293b; color: #e2e8f0; }
+    #mic-btn:hover:not(:disabled) { background: #dee5ff; color: #1f2a44; }
     #mic-btn.listening {
       background: #dc2626;
       color: #fff;
@@ -277,45 +296,49 @@
     /* scrollbar */
     ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #d9dff1; border-radius: 4px; }
   </style>
 </head>
 <body>
 
-<header>
-  <div>
-    <div class="logo">🎙 Voice AI Pipeline</div>
-    <div class="subtitle">SAA-50 · Call Simulator</div>
+<header class="top-header">
+  <div class="logo">📊 VoiceSurvey AI</div>
+  <nav class="nav-links">
+    <a href="/" class="nav-link">בונה קמפיינים</a>
+    <a href="/dashboard" class="nav-link">דשבורד</a>
+    <a href="/voice" class="nav-link active" aria-current="page">שיחות לייב</a>
+  </nav>
+  <div class="header-right">
+    <div class="live-dot"></div>
+    <span class="live-label">חי</span>
+    <span id="last-updated">סימולטור שיחות</span>
+    <button id="voice-toggle" onclick="toggleVoice()" style="margin-left:8px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#ffffff;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">🔊 קול פעיל</button>
   </div>
-  <a href="/">← Campaign Builder</a>
-  <a href="/dashboard">Dashboard</a>
-  <a href="/docs" target="_blank">API Docs ↗</a>
-  <button id="voice-toggle" onclick="toggleVoice()" style="margin-left:8px;background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">🔊 Voice ON</button>
 </header>
 
 <div class="app">
 
   <!-- LEFT: Setup + state -->
   <div class="setup-panel">
-    <div class="panel-title">Call Setup</div>
+    <div class="panel-title">הגדרת שיחה</div>
     <div class="setup-body">
       <div>
-        <label>Campaign</label>
-        <select id="campaign-select"><option value="">Loading…</option></select>
+        <label>קמפיין</label>
+        <select id="campaign-select"><option value="">טוען...</option></select>
       </div>
       <div>
-        <label>Caller phone number</label>
+        <label>מספר טלפון</label>
         <input type="text" id="phone-input" value="+1-555-0100" />
       </div>
       <div>
-        <label>Locale</label>
+        <label>לוקייל</label>
         <input type="text" id="locale-input" value="en-US" />
       </div>
-      <button class="btn btn-primary" id="start-btn">▶ Start Call</button>
-      <button class="btn btn-danger"  id="end-btn" disabled>⬛ End Call</button>
+      <button class="btn btn-primary" id="start-btn">▶ התחלת שיחה</button>
+      <button class="btn btn-danger"  id="end-btn" disabled>⬛ סיום שיחה</button>
     </div>
 
-    <div class="panel-title" style="margin-top:8px">Session State</div>
+    <div class="panel-title" style="margin-top:8px">מצב סשן</div>
     <div class="state-card" id="state-card" style="display:none">
       <div class="row"><span class="key">State</span><span class="val" id="s-state">—</span></div>
       <div class="row"><span class="key">Question</span><span class="val" id="s-question">—</span></div>
@@ -324,7 +347,7 @@
     </div>
 
     <div class="answers-box" id="answers-box" style="display:none">
-      <div class="a-title">Collected Answers</div>
+      <div class="a-title">תשובות שנאספו</div>
       <div id="answers-list"></div>
     </div>
   </div>
@@ -334,8 +357,8 @@
     <div class="call-header">
       <div class="call-status-dot" id="status-dot"></div>
       <div class="call-info">
-        <div class="ci-main" id="ci-main">No active call</div>
-        <div class="ci-sub"  id="ci-sub">Select a campaign and press Start Call</div>
+        <div class="ci-main" id="ci-main">אין שיחה פעילה</div>
+        <div class="ci-sub"  id="ci-sub">יש לבחור קמפיין וללחוץ על התחלת שיחה</div>
       </div>
     </div>
 
@@ -345,7 +368,7 @@
           <path d="M12 18.5A6.5 6.5 0 1 0 5.5 12v.5A6.5 6.5 0 0 0 12 18.5z"/>
           <path d="M12 18.5v3M9 21.5h6"/>
         </svg>
-        <p>Start a call to see the Voice AI Pipeline in action</p>
+        <p>התחל שיחה כדי לראות את Voice AI Pipeline בפעולה</p>
       </div>
     </div>
 
@@ -362,7 +385,7 @@
       <button id="mic-btn" disabled title="Hold to speak">🎤</button>
       <input id="caller-input" type="text" placeholder="Speak or type your reply…" disabled />
       <span class="listening-indicator" id="listen-label" style="display:none">Listening…</span>
-      <button id="send-btn" disabled>Send</button>
+      <button id="send-btn" disabled>שליחה</button>
     </div>
   </div>
 
@@ -404,7 +427,7 @@ async function loadCampaigns() {
   const res = await fetch(`${API}/api/campaigns`);
   const list = await res.json();
   const sel = document.getElementById('campaign-select');
-  sel.innerHTML = '<option value="">— select —</option>';
+  sel.innerHTML = '<option value="">— בחר —</option>';
   list.filter(c => c.status === 'active').forEach(c => {
     const o = document.createElement('option');
     o.value = c.id;
@@ -412,7 +435,7 @@ async function loadCampaigns() {
     sel.appendChild(o);
   });
   if (!list.filter(c => c.status === 'active').length) {
-    sel.innerHTML = '<option value="">No active campaigns</option>';
+    sel.innerHTML = '<option value="">אין קמפיינים פעילים</option>';
   }
 }
 loadCampaigns();
@@ -536,7 +559,7 @@ function updateAnswers(answers) {
 // ── Start call ───────────────────────────────────────────────────────────────
 document.getElementById('start-btn').addEventListener('click', async () => {
   const cid = document.getElementById('campaign-select').value;
-  if (!cid) { alert('Please select an active campaign.'); return; }
+  if (!cid) { alert('יש לבחור קמפיין פעיל.'); return; }
 
   campaignId = cid;
   turnCount = 0;
@@ -663,7 +686,7 @@ function resetUI() {
 function toggleVoice() {
   voiceEnabled = !voiceEnabled;
   const btn = document.getElementById('voice-toggle');
-  btn.textContent = voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+  btn.textContent = voiceEnabled ? '🔊 קול פעיל' : '🔇 קול כבוי';
   btn.style.color = voiceEnabled ? '#4ade80' : '#64748b';
   if (!voiceEnabled) synth.cancel();
 }

@@ -31,7 +31,7 @@ function showToast(message) {
 async function api(path, options = {}) {
   const res = await fetch(path, options);
   if (!res.ok) {
-    let detail = "Request failed";
+    let detail = "הבקשה נכשלה";
     try {
       const body = await res.json();
       detail = body.detail || detail;
@@ -59,9 +59,9 @@ function renderQuestions() {
       </div>
       <div>${q.prompt}</div>
       <div class="actions">
-        <button data-up="${q.id}" class="alt">Up</button>
-        <button data-down="${q.id}" class="alt">Down</button>
-        <button data-delete="${q.id}" class="warn">Delete</button>
+        <button data-up="${q.id}" class="alt">למעלה</button>
+        <button data-down="${q.id}" class="alt">למטה</button>
+        <button data-delete="${q.id}" class="warn">מחיקה</button>
       </div>
     `;
     questionList.appendChild(li);
@@ -77,10 +77,10 @@ function renderRules(items) {
     const source = map[rule.source_question_id] || `Q${rule.source_question_id}`;
     const target = rule.target_question_id ? map[rule.target_question_id] || `Q${rule.target_question_id}` : "-";
     li.innerHTML = `
-      <div><strong>#${rule.id}</strong> if <code>${source}</code> ${rule.operator} <code>${rule.value}</code></div>
-      <div>action: <strong>${rule.action}</strong> target: <strong>${target}</strong> priority: ${rule.priority}</div>
+      <div><strong>#${rule.id}</strong> אם <code>${source}</code> ${rule.operator} <code>${rule.value}</code></div>
+      <div>פעולה: <strong>${rule.action}</strong> יעד: <strong>${target}</strong> עדיפות: ${rule.priority}</div>
       <div class="actions">
-        <button data-rule-delete="${rule.id}" class="warn">Delete</button>
+        <button data-rule-delete="${rule.id}" class="warn">מחיקה</button>
       </div>
     `;
     ruleList.appendChild(li);
@@ -91,7 +91,7 @@ function renderParticipants(items) {
   participantList.innerHTML = "";
   items.forEach((p) => {
     const li = document.createElement("li");
-    li.innerHTML = `<div><strong>${p.phone_number}</strong> (${p.locale || "n/a"})</div><div>${p.full_name || "Unnamed"} | ${p.status}</div>`;
+    li.innerHTML = `<div><strong>${p.phone_number}</strong> (${p.locale || "לא זמין"})</div><div>${p.full_name || "ללא שם"} | ${p.status}</div>`;
     participantList.appendChild(li);
   });
 }
@@ -101,18 +101,18 @@ function fillRuleQuestionSelects() {
     .map((q) => `<option value="${q.id}">${q.key}</option>`)
     .join("");
   ruleSource.innerHTML = options;
-  ruleTarget.innerHTML = `<option value="">(none)</option>${options}`;
+  ruleTarget.innerHTML = `<option value="">(ללא)</option>${options}`;
 }
 
 function renderExecutionStatus() {
   if (!state.execution) {
-    executionStatus.textContent = "Execution: unknown";
+    executionStatus.textContent = "סטטוס ביצוע: לא ידוע";
     return;
   }
   const lastTick = state.execution.last_tick_at
-    ? ` | last tick: ${new Date(state.execution.last_tick_at).toLocaleString()}`
+    ? ` | עדכון אחרון: ${new Date(state.execution.last_tick_at).toLocaleString()}`
     : "";
-  executionStatus.textContent = `Execution: ${state.execution.state}${lastTick}`;
+  executionStatus.textContent = `סטטוס ביצוע: ${state.execution.state}${lastTick}`;
 }
 
 function renderPolicyForm() {
@@ -131,7 +131,7 @@ function renderPolicyForm() {
 function renderAttempts(items) {
   attemptList.innerHTML = "";
   if (!items.length) {
-    attemptList.innerHTML = "<li>No call attempts yet.</li>";
+    attemptList.innerHTML = "<li>עדיין אין ניסיונות חיוג.</li>";
     return;
   }
 
@@ -159,7 +159,7 @@ async function loadCampaignCards() {
   const campaigns = await api("/api/campaigns/summary");
   campaignCards.innerHTML = "";
   if (!campaigns.length) {
-    campaignCards.innerHTML = "<p>No campaigns yet. Create your first one above.</p>";
+    campaignCards.innerHTML = "<p>עדיין אין קמפיינים. אפשר ליצור את הראשון למעלה.</p>";
     return;
   }
 
@@ -168,16 +168,16 @@ async function loadCampaignCards() {
     card.className = "card";
     card.innerHTML = `
       <h3>${c.name}</h3>
-      <div class="meta">${c.language} | ${c.timezone} | status: <strong>${c.status}</strong></div>
-      <div class="meta">Questions: ${c.question_count} | Participants: ${c.participant_count}</div>
+      <div class="meta">${c.language} | ${c.timezone} | סטטוס: <strong>${c.status}</strong></div>
+      <div class="meta">שאלות: ${c.question_count} | משתתפים: ${c.participant_count}</div>
       <div class="actions">
-        <button data-open="${c.id}">Open Builder</button>
-        <button data-duplicate="${c.id}" class="alt">Duplicate</button>
-        <button data-start="${c.id}" class="alt">Start</button>
-        <button data-pause="${c.id}" class="alt">Pause</button>
-        <button data-resume="${c.id}" class="alt">Resume</button>
-        <button data-stop="${c.id}" class="warn">Stop</button>
-        <button data-delete-campaign="${c.id}" class="warn">Delete</button>
+        <button data-open="${c.id}">פתיחת הבונה</button>
+        <button data-duplicate="${c.id}" class="alt">שכפול</button>
+        <button data-start="${c.id}" class="alt">התחלה</button>
+        <button data-pause="${c.id}" class="alt">השהיה</button>
+        <button data-resume="${c.id}" class="alt">חידוש</button>
+        <button data-stop="${c.id}" class="warn">עצירה</button>
+        <button data-delete-campaign="${c.id}" class="warn">מחיקה</button>
       </div>
     `;
     campaignCards.appendChild(card);
@@ -187,7 +187,7 @@ async function loadCampaignCards() {
 async function openCampaign(id) {
   state.selectedCampaignId = id;
   const campaign = await api(`/api/campaigns/${id}`);
-  builderTitle.textContent = `Campaign Builder: ${campaign.name}`;
+  builderTitle.textContent = `בונה קמפיינים: ${campaign.name}`;
   builderPanel.classList.remove("hidden");
 
   state.questions = await api(`/api/campaigns/${id}/questions`);
@@ -210,7 +210,7 @@ async function openCampaign(id) {
 
 function getSelectedCampaignId() {
   if (!state.selectedCampaignId) {
-    throw new Error("Open a campaign first");
+    throw new Error("יש לפתוח קמפיין קודם");
   }
   return state.selectedCampaignId;
 }
@@ -227,7 +227,7 @@ document.getElementById("campaign-form").addEventListener("submit", async (e) =>
       body: JSON.stringify(payload),
     });
     e.target.reset();
-    showToast("Campaign created");
+    showToast("הקמפיין נוצר");
     await loadCampaignCards();
   } catch (err) {
     showToast(err.message);
@@ -255,10 +255,10 @@ campaignCards.addEventListener("click", async (e) => {
   try {
     if (btn.dataset.open) {
       await openCampaign(Number(id));
-      showToast("Campaign opened");
+      showToast("הקמפיין נפתח");
     } else if (btn.dataset.duplicate) {
       await api(`/api/campaigns/${id}/duplicate`, { method: "POST" });
-      showToast("Campaign duplicated");
+      showToast("הקמפיין שוכפל");
       await loadCampaignCards();
     } else if (btn.dataset.start) {
       await api(`/api/campaigns/${id}/start`, { method: "POST" });
@@ -267,7 +267,7 @@ campaignCards.addEventListener("click", async (e) => {
         renderExecutionStatus();
         await loadAttempts(Number(id));
       }
-      showToast("Campaign started");
+      showToast("הקמפיין הופעל");
       await loadCampaignCards();
     } else if (btn.dataset.pause) {
       await api(`/api/campaigns/${id}/pause`, { method: "POST" });
@@ -276,7 +276,7 @@ campaignCards.addEventListener("click", async (e) => {
         renderExecutionStatus();
         await loadAttempts(Number(id));
       }
-      showToast("Campaign paused");
+      showToast("הקמפיין הושהה");
       await loadCampaignCards();
     } else if (btn.dataset.resume) {
       await api(`/api/campaigns/${id}/resume`, { method: "POST" });
@@ -285,7 +285,7 @@ campaignCards.addEventListener("click", async (e) => {
         renderExecutionStatus();
         await loadAttempts(Number(id));
       }
-      showToast("Campaign resumed");
+      showToast("הקמפיין חודש");
       await loadCampaignCards();
     } else if (btn.dataset.stop) {
       await api(`/api/campaigns/${id}/stop`, { method: "POST" });
@@ -294,7 +294,7 @@ campaignCards.addEventListener("click", async (e) => {
         renderExecutionStatus();
         await loadAttempts(Number(id));
       }
-      showToast("Campaign stopped");
+      showToast("הקמפיין נעצר");
       await loadCampaignCards();
     } else if (btn.dataset.deleteCampaign) {
       await api(`/api/campaigns/${id}`, { method: "DELETE" });
@@ -302,7 +302,7 @@ campaignCards.addEventListener("click", async (e) => {
         builderPanel.classList.add("hidden");
         state.selectedCampaignId = null;
       }
-      showToast("Campaign deleted");
+      showToast("הקמפיין נמחק");
       await loadCampaignCards();
     }
   } catch (err) {
@@ -331,7 +331,7 @@ policyForm.addEventListener("submit", async (e) => {
       body: JSON.stringify(payload),
     });
     renderPolicyForm();
-    showToast("Calling policy saved");
+    showToast("מדיניות החיוג נשמרה");
   } catch (err) {
     showToast(err.message);
   }
@@ -341,7 +341,7 @@ refreshAttemptsButton.addEventListener("click", async () => {
   try {
     const campaignId = getSelectedCampaignId();
     await loadAttempts(campaignId);
-    showToast("Attempts refreshed");
+    showToast("ניסיונות רועננו");
   } catch (err) {
     showToast(err.message);
   }
@@ -379,7 +379,7 @@ document.getElementById("question-form").addEventListener("submit", async (e) =>
     state.questions = await api(`/api/campaigns/${campaignId}/questions`);
     renderQuestions();
     await loadCampaignCards();
-    showToast("Question added");
+    showToast("השאלה נוספה");
   } catch (err) {
     showToast(err.message);
   }
@@ -416,7 +416,7 @@ questionList.addEventListener("click", async (e) => {
     state.questions = await api(`/api/campaigns/${campaignId}/questions`);
     renderQuestions();
     await loadCampaignCards();
-    showToast("Questions updated");
+    showToast("השאלות עודכנו");
   } catch (err) {
     showToast(err.message);
   }
@@ -450,7 +450,7 @@ document.getElementById("rule-form").addEventListener("submit", async (e) => {
 
     const rules = await api(`/api/campaigns/${campaignId}/rules`);
     renderRules(rules);
-    showToast("Rule added");
+    showToast("הכלל נוסף");
   } catch (err) {
     showToast(err.message);
   }
@@ -471,7 +471,7 @@ ruleList.addEventListener("click", async (e) => {
     await api(`/api/rules/${btn.dataset.ruleDelete}`, { method: "DELETE" });
     const rules = await api(`/api/campaigns/${campaignId}/rules`);
     renderRules(rules);
-    showToast("Rule deleted");
+    showToast("הכלל נמחק");
   } catch (err) {
     showToast(err.message);
   }
@@ -490,7 +490,7 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
     const participants = await api(`/api/campaigns/${campaignId}/participants`);
     renderParticipants(participants);
     await loadCampaignCards();
-    showToast("Participants uploaded");
+    showToast("המשתתפים הועלו");
   } catch (err) {
     showToast(err.message);
   }

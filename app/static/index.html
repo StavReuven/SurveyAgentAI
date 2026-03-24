@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VoiceSurvey AI - Campaign Builder</title>
+    <title>VoiceSurvey AI - בונה קמפיינים</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,59 +12,72 @@
     />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
-  <body>
+  <body class="rtl-ui">
     <div class="bg-orb bg-orb-a"></div>
     <div class="bg-orb bg-orb-b"></div>
 
+    <header class="top-header">
+      <div class="logo">📊 VoiceSurvey AI</div>
+      <nav class="nav-links">
+        <a href="/" class="nav-link active" aria-current="page">בונה קמפיינים</a>
+        <a href="/dashboard" class="nav-link">דשבורד</a>
+        <a href="/voice" class="nav-link">שיחות לייב</a>
+      </nav>
+      <div class="header-right">
+        <div class="live-dot"></div>
+        <span class="live-label">חי</span>
+      </div>
+    </header>
+
     <main class="layout">
-      <header class="header">
-        <h1>Survey Management (Campaign Builder)</h1>
+      <header class="header panel">
+        <h1>ניהול סקרים (בונה קמפיינים)</h1>
         <p>
-          Build opt-in voice survey campaigns with question flows, branching logic,
-          and participant uploads.
+          יצירה וניהול של קמפייני סקר קולי עם זרימת שאלות, לוגיקת הסתעפות
+          והעלאת משתתפים.
         </p>
       </header>
 
       <section class="panel panel-create">
-        <h2>Create Campaign</h2>
+        <h2>יצירת קמפיין</h2>
         <form id="campaign-form" class="grid-form">
           <label>
-            Name
+            שם
             <input name="name" required minlength="2" placeholder="Brand NPS Q2" />
           </label>
           <label>
-            Language
+            שפה
             <input name="language" value="en" maxlength="16" />
           </label>
           <label>
-            Timezone
+            אזור זמן
             <input name="timezone" value="UTC" maxlength="64" />
           </label>
           <label class="full">
-            Consent Text
+            טקסט הסכמה
             <textarea
               name="consent_text"
               required
               minlength="5"
-              placeholder="This call is recorded for quality and research purposes..."
+              placeholder="השיחה מוקלטת לצורכי איכות ומחקר..."
             ></textarea>
           </label>
-          <button type="submit">Create Campaign</button>
+          <button type="submit">יצירת קמפיין</button>
         </form>
       </section>
 
       <section class="panel">
-        <h2>Campaign Cards + Quick Actions</h2>
+        <h2>קמפיינים ופעולות מהירות</h2>
         <div id="campaign-cards" class="cards"></div>
       </section>
 
       <section id="builder-panel" class="panel hidden">
-        <h2 id="builder-title">Campaign Builder</h2>
-        <p id="execution-status" class="hint">Execution: unknown</p>
+        <h2 id="builder-title">בונה קמפיינים</h2>
+        <p id="execution-status" class="hint">סטטוס ביצוע: לא ידוע</p>
 
         <div class="builder-grid">
           <article class="subpanel">
-            <h3>Question Builder (Rating/MCQ/Free-Text)</h3>
+            <h3>בניית שאלות (דירוג/רב־ברירה/טקסט חופשי)</h3>
             <form id="question-form" class="stack-form">
               <input name="key" required placeholder="q_nps" />
               <input
@@ -83,16 +96,16 @@
                   placeholder="MCQ options, comma-separated"
                 />
                 <label class="check">
-                  <input name="required" type="checkbox" checked /> Required
+                  <input name="required" type="checkbox" checked /> חובה
                 </label>
               </div>
-              <button type="submit">Add Question</button>
+                <button type="submit">הוספת שאלה</button>
             </form>
             <ul id="question-list" class="list"></ul>
           </article>
 
           <article class="subpanel">
-            <h3>Skip Logic / Branching</h3>
+              <h3>לוגיקת הסתעפות / דילוג</h3>
             <form id="rule-form" class="stack-form">
               <select name="source_question_id" id="rule-source"></select>
               <div class="row">
@@ -103,7 +116,7 @@
                   <option value="gt">gt</option>
                   <option value="lt">lt</option>
                 </select>
-                <input name="value" required placeholder="Condition value" />
+                <input name="value" required placeholder="ערך תנאי" />
               </div>
               <div class="row">
                 <select name="action" id="rule-action">
@@ -114,65 +127,65 @@
                 <select name="target_question_id" id="rule-target"></select>
                 <input name="priority" type="number" value="100" />
               </div>
-              <button type="submit">Add Rule</button>
+              <button type="submit">הוספת כלל</button>
             </form>
             <ul id="rule-list" class="list"></ul>
           </article>
 
           <article class="subpanel">
-            <h3>Opt-in Participants Upload</h3>
-            <p class="hint">CSV columns: phone_number, full_name, locale</p>
+            <h3>העלאת משתתפים מאושרי דיוור</h3>
+            <p class="hint">עמודות CSV: phone_number, full_name, locale</p>
             <form id="upload-form" class="stack-form">
               <input name="file" type="file" accept=".csv" required />
-              <button type="submit">Upload CSV</button>
+              <button type="submit">העלאת CSV</button>
             </form>
             <ul id="participant-list" class="list"></ul>
           </article>
 
           <article class="subpanel">
-            <h3>Calling Policies (Windows/Retry/Cooldown)</h3>
+            <h3>מדיניות חיוג (חלונות זמן/ניסיונות/צינון)</h3>
             <form id="policy-form" class="stack-form">
               <div class="row">
                 <label>
-                  Window Start Hour
+                  שעת התחלת חלון
                   <input name="window_start_hour" type="number" min="0" max="23" value="9" />
                 </label>
                 <label>
-                  Window End Hour
+                  שעת סיום חלון
                   <input name="window_end_hour" type="number" min="1" max="24" value="18" />
                 </label>
               </div>
               <div class="row">
                 <label>
-                  Max Attempts
+                  מספר ניסיונות מקסימלי
                   <input name="max_attempts" type="number" min="1" max="10" value="3" />
                 </label>
                 <label>
-                  Retry Delay (minutes)
+                  השהיה בין ניסיונות (דקות)
                   <input name="retry_delay_minutes" type="number" min="1" max="1440" value="30" />
                 </label>
               </div>
               <div class="row">
                 <label>
-                  Cooldown (hours)
+                  זמן צינון (שעות)
                   <input name="cooldown_hours" type="number" min="0" max="168" value="24" />
                 </label>
                 <label>
-                  Max Calls/Minute
+                  מקסימום שיחות לדקה
                   <input name="max_calls_per_minute" type="number" min="1" max="500" value="10" />
                 </label>
               </div>
               <label class="check">
-                <input name="enabled" type="checkbox" checked /> Policy Enabled
+                <input name="enabled" type="checkbox" checked /> המדיניות פעילה
               </label>
-              <button type="submit">Save Policy</button>
+              <button type="submit">שמירת מדיניות</button>
             </form>
           </article>
 
           <article class="subpanel">
-            <h3>Execution Activity</h3>
+            <h3>פעילות ביצוע</h3>
             <div class="actions">
-              <button id="refresh-attempts" type="button" class="alt">Refresh Attempts</button>
+              <button id="refresh-attempts" type="button" class="alt">רענון ניסיונות</button>
             </div>
             <ul id="attempt-list" class="list"></ul>
           </article>

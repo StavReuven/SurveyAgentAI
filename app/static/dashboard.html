@@ -1,53 +1,55 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>VoiceSurvey AI — Dashboard</title>
+  <title>VoiceSurvey AI — דשבורד</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:        #0f1117;
-      --surface:   #1e293b;
-      --border:    #334155;
-      --text:      #e2e8f0;
-      --muted:     #64748b;
-      --accent:    #38bdf8;
-      --green:     #4ade80;
-      --yellow:    #fbbf24;
-      --red:       #f87171;
-      --purple:    #a78bfa;
+      --bg:        #f4f6fb;
+      --surface:   #ffffff;
+      --border:    #e6eaf4;
+      --text:      #1f2a44;
+      --muted:     #7a859f;
+      --accent:    #4f6bff;
+      --green:     #16a34a;
+      --yellow:    #d97706;
+      --red:       #dc2626;
+      --purple:    #7c3aed;
     }
 
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; direction: rtl; text-align: right; }
 
     /* ── Header ─────────────────────────────────── */
     header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, #4778ff 0%, #7b3ff1 100%);
+      border-bottom: none;
       padding: 0 28px;
-      height: 58px;
+      height: 74px;
       display: flex;
       align-items: center;
       gap: 20px;
       position: sticky;
       top: 0;
       z-index: 100;
+      box-shadow: 0 16px 34px rgba(87, 76, 205, 0.26);
     }
-    .logo { font-size: 18px; font-weight: 700; color: var(--accent); }
-    .nav-links { display: flex; gap: 2px; margin-left: 12px; }
+    .logo { font-size: 18px; font-weight: 700; color: #ffffff; }
+    .nav-links { display: flex; gap: 2px; margin-inline-start: 12px; }
     .nav-link {
       padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 500;
-      text-decoration: none; color: var(--muted); transition: all .15s;
+      text-decoration: none; color: #e8ebff; transition: all .15s;
     }
-    .nav-link:hover, .nav-link.active { background: #334155; color: var(--text); }
-    .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+    .nav-link:hover, .nav-link.active { background: rgba(255,255,255,.2); color: #ffffff; }
+    .header-right { margin-inline-start: auto; display: flex; align-items: center; gap: 14px; }
     .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
     @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 #4ade8066} 50%{box-shadow:0 0 0 5px #4ade8000} }
-    .live-label { font-size: 12px; color: var(--muted); }
-    #last-updated { font-size: 11px; color: var(--muted); }
+    .live-label { font-size: 12px; color: #e8ebff; }
+    #last-updated { font-size: 11px; color: #dbe0ff; }
+
 
     /* ── Filters bar (SAA-103) ───────────────────── */
     .filters-bar {
@@ -56,11 +58,11 @@
       align-items: center;
       gap: 12px;
       border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      background: #ffffff;
     }
     .filters-bar label { font-size: 12px; color: var(--muted); }
     select {
-      background: var(--bg);
+      background: #ffffff;
       border: 1px solid var(--border);
       color: var(--text);
       padding: 6px 10px;
@@ -72,7 +74,7 @@
     select:focus { border-color: var(--accent); }
     .filter-sep { flex: 1; }
     .refresh-btn {
-      background: none;
+      background: #ffffff;
       border: 1px solid var(--border);
       color: var(--muted);
       padding: 6px 14px;
@@ -103,6 +105,7 @@
       transition: border-color .2s;
       position: relative;
       overflow: hidden;
+      box-shadow: 0 12px 24px rgba(31, 42, 68, 0.06);
     }
     .kpi-card::before {
       content: '';
@@ -140,6 +143,7 @@
       display: flex;
       flex-direction: column;
       gap: 14px;
+      box-shadow: 0 12px 24px rgba(31, 42, 68, 0.06);
     }
     .chart-title { font-size: 13px; font-weight: 600; color: var(--text); }
     .chart-subtitle { font-size: 11px; color: var(--muted); }
@@ -168,7 +172,7 @@
     }
     .section-title { font-size: 15px; font-weight: 600; }
     .count-badge {
-      background: #334155;
+      background: #eef2ff;
       color: var(--muted);
       font-size: 11px;
       font-weight: 600;
@@ -176,7 +180,7 @@
       border-radius: 999px;
     }
     .count-badge.live { background: #14532d33; color: var(--green); }
-    .polling-label { font-size: 11px; color: var(--muted); margin-left: auto; }
+    .polling-label { font-size: 11px; color: var(--muted); margin-inline-start: auto; }
 
     .call-cards-grid {
       display: grid;
@@ -194,19 +198,20 @@
       flex-direction: column;
       gap: 12px;
       animation: fadeIn .3s ease;
+      box-shadow: 0 12px 24px rgba(31, 42, 68, 0.06);
     }
     @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
     .call-card-top { display: flex; align-items: center; gap: 10px; }
     .call-avatar {
       width: 38px; height: 38px; border-radius: 50%;
-      background: #1e40af33;
+      background: #eef2ff;
       display: flex; align-items: center; justify-content: center;
       font-size: 16px; flex-shrink: 0;
     }
     .call-phone { font-size: 13px; font-weight: 600; }
     .call-campaign { font-size: 11px; color: var(--muted); }
     .call-state-badge {
-      margin-left: auto;
+      margin-inline-start: auto;
       padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
     }
     .state-asking    { background: #1e40af33; color: #93c5fd; }
@@ -221,26 +226,26 @@
     /* Progress bar */
     .progress-section { display: flex; flex-direction: column; gap: 5px; }
     .progress-header { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
-    .progress-bar { height: 5px; background: #334155; border-radius: 999px; overflow: hidden; }
-    .progress-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s ease; }
+    .progress-bar { height: 5px; background: #e8edfb; border-radius: 999px; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #3f7cff 0%, #7b3ff1 100%); border-radius: 999px; transition: width .4s ease; }
 
     /* Rapport + mirroring */
     .call-meta { display: flex; gap: 14px; }
     .meta-item { display: flex; flex-direction: column; gap: 2px; flex: 1; }
     .meta-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
     .meta-value { font-size: 13px; font-weight: 600; }
-    .rapport-bar { height: 4px; background: #334155; border-radius: 999px; margin-top: 4px; overflow: hidden; }
+    .rapport-bar { height: 4px; background: #e8edfb; border-radius: 999px; margin-top: 4px; overflow: hidden; }
     .rapport-fill { height: 100%; border-radius: 999px; }
 
     .mirror-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
     .mirror-on   { background: #14532d33; color: var(--green); }
-    .mirror-off  { background: #33415544; color: var(--muted); }
+    .mirror-off  { background: #eef2ff; color: var(--muted); }
 
     /* Answers pill list */
     .answers-row { display: flex; flex-wrap: wrap; gap: 6px; }
     .answer-pill {
       font-size: 11px;
-      background: #0f172a;
+      background: #f8f9ff;
       border: 1px solid var(--border);
       padding: 2px 8px;
       border-radius: 999px;
@@ -267,32 +272,32 @@
 <header>
   <div class="logo">📊 VoiceSurvey AI</div>
   <nav class="nav-links">
-    <a href="/"         class="nav-link">Campaigns</a>
-    <a href="/dashboard" class="nav-link active">Dashboard</a>
-    <a href="/voice"    class="nav-link">Call Simulator</a>
+    <a href="/"         class="nav-link">בונה קמפיינים</a>
+    <a href="/dashboard" class="nav-link active">דשבורד</a>
+    <a href="/voice"    class="nav-link">שיחות לייב</a>
   </nav>
   <div class="header-right">
     <div class="live-dot"></div>
-    <span class="live-label">Live</span>
+    <span class="live-label">חי</span>
     <span id="last-updated">—</span>
   </div>
 </header>
 
 <!-- SAA-103: Filters bar -->
 <div class="filters-bar">
-  <label>Campaign</label>
+  <label>קמפיין</label>
   <select id="filter-campaign">
-    <option value="">All campaigns</option>
+    <option value="">כל הקמפיינים</option>
   </select>
-  <label>Period</label>
+  <label>תקופה</label>
   <select id="filter-period">
-    <option value="all"   selected>All time</option>
-    <option value="today">Today</option>
-    <option value="week">Last 7 days</option>
-    <option value="month">Last 30 days</option>
+    <option value="all"   selected>כל הזמן</option>
+    <option value="today">היום</option>
+    <option value="week">7 ימים אחרונים</option>
+    <option value="month">30 ימים אחרונים</option>
   </select>
   <div class="filter-sep"></div>
-  <button class="refresh-btn" onclick="refreshAll()">↻ Refresh</button>
+  <button class="refresh-btn" onclick="refreshAll()">↻ רענון</button>
 </div>
 
 <main>
@@ -301,37 +306,37 @@
   <div class="kpi-grid" id="kpi-grid">
     <div class="kpi-card" style="--accent-color:#38bdf8">
       <div class="kpi-icon">📞</div>
-      <div class="kpi-label">Total Calls</div>
+      <div class="kpi-label">סה"כ שיחות</div>
       <div class="kpi-value" id="kpi-total">—</div>
-      <div class="kpi-sub">all recorded sessions</div>
+      <div class="kpi-sub">כל השיחות שתועדו</div>
     </div>
     <div class="kpi-card" style="--accent-color:#4ade80">
       <div class="kpi-icon">✅</div>
-      <div class="kpi-label">Completion Rate</div>
+      <div class="kpi-label">שיעור השלמה</div>
       <div class="kpi-value" id="kpi-rate">—</div>
-      <div class="kpi-sub" id="kpi-rate-sub">of calls completed</div>
+      <div class="kpi-sub" id="kpi-rate-sub">אחוז שיחות שהושלמו</div>
     </div>
     <div class="kpi-card" style="--accent-color:#fbbf24">
       <div class="kpi-icon">⭐</div>
-      <div class="kpi-label">Avg Rating</div>
+      <div class="kpi-label">דירוג ממוצע</div>
       <div class="kpi-value" id="kpi-rating">—</div>
-      <div class="kpi-sub">from answered rating Qs</div>
+      <div class="kpi-sub">מתוך שאלות דירוג שנענו</div>
     </div>
     <div class="kpi-card" style="--accent-color:#a78bfa">
       <div class="kpi-icon">🎙</div>
-      <div class="kpi-label">Avg Rapport</div>
+      <div class="kpi-label">ממוצע ראפור</div>
       <div class="kpi-value" id="kpi-rapport">—</div>
-      <div class="kpi-sub">caller confidence score</div>
+      <div class="kpi-sub">ציון בטחון של המשיב</div>
     </div>
     <div class="kpi-card" style="--accent-color:#38bdf8">
       <div class="kpi-icon">🔴</div>
-      <div class="kpi-label">Active Calls</div>
+      <div class="kpi-label">שיחות פעילות</div>
       <div class="kpi-value" id="kpi-active">—</div>
-      <div class="kpi-sub">in progress right now</div>
+      <div class="kpi-sub">מתנהלות כרגע</div>
     </div>
     <div class="kpi-card" style="--accent-color:#f87171">
       <div class="kpi-icon">📋</div>
-      <div class="kpi-label">Active Campaigns</div>
+      <div class="kpi-label">קמפיינים פעילים</div>
       <div class="kpi-value" id="kpi-campaigns">—</div>
       <div class="kpi-sub" id="kpi-participants">—</div>
     </div>
@@ -343,15 +348,15 @@
     <!-- Pie: call outcomes -->
     <div class="chart-card">
       <div>
-        <div class="chart-title">Call Outcomes</div>
-        <div class="chart-subtitle">Distribution by result status</div>
+        <div class="chart-title">תוצאות שיחה</div>
+        <div class="chart-subtitle">התפלגות לפי סטטוס תוצאה</div>
       </div>
       <div class="chart-wrap">
         <div class="empty-chart" id="outcomes-empty">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
           </svg>
-          No call data yet
+          עדיין אין נתוני שיחות
         </div>
         <canvas id="outcomes-chart" style="display:none"></canvas>
       </div>
@@ -360,15 +365,15 @@
     <!-- Bar: calls by hour -->
     <div class="chart-card">
       <div>
-        <div class="chart-title">Calls by Hour</div>
-        <div class="chart-subtitle">Number of calls started per hour</div>
+        <div class="chart-title">שיחות לפי שעה</div>
+        <div class="chart-subtitle">מספר שיחות שהחלו בכל שעה</div>
       </div>
       <div class="chart-wrap">
         <div class="empty-chart" id="hours-empty">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M3 20h18M5 20V10l7-7 7 7v10"/>
           </svg>
-          No call data yet
+          עדיין אין נתוני שיחות
         </div>
         <canvas id="hours-chart" style="display:none"></canvas>
       </div>
@@ -379,14 +384,14 @@
   <!-- SAA-108/111: Live Calls List -->
   <div>
     <div class="section-header">
-      <div class="section-title">Live Calls</div>
+      <div class="section-title">שיחות לייב</div>
       <span class="count-badge live" id="live-count-badge">0 active</span>
-      <span class="polling-label" id="polling-label">polling every 5s</span>
+      <span class="polling-label" id="polling-label">רענון כל 5 שניות</span>
     </div>
     <div class="call-cards-grid" id="live-calls-grid">
       <div class="empty-live">
         <div class="big">📵</div>
-        No active calls right now. Start a call from the <a href="/voice" style="color:var(--accent)">Call Simulator</a>.
+        כרגע אין שיחות פעילות. אפשר להתחיל שיחה מתוך <a href="/voice" style="color:var(--accent)">שיחות לייב</a>.
       </div>
     </div>
   </div>
@@ -523,7 +528,7 @@ async function loadLiveCalls() {
   const grid = document.getElementById('live-calls-grid');
 
   if (!d.live_calls.length) {
-    grid.innerHTML = `<div class="empty-live"><div class="big">📵</div>No active calls right now. Start a call from the <a href="/voice" style="color:var(--accent)">Call Simulator</a>.</div>`;
+    grid.innerHTML = `<div class="empty-live"><div class="big">📵</div>כרגע אין שיחות פעילות. אפשר להתחיל שיחה מתוך <a href="/voice" style="color:var(--accent)">שיחות לייב</a>.</div>`;
     return;
   }
 
