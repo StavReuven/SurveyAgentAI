@@ -1,0 +1,673 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Voice AI Pipeline ג€” Call Simulator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ג”€ג”€ Header ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    header {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border-bottom: 1px solid #334155;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header .logo { font-size: 22px; font-weight: 700; color: #38bdf8; letter-spacing: -0.5px; }
+    header .subtitle { font-size: 13px; color: #64748b; }
+    header a { margin-left: auto; color: #64748b; font-size: 13px; text-decoration: none; }
+    header a:hover { color: #38bdf8; }
+
+    /* ג”€ג”€ Layout ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    .app { display: flex; flex: 1; height: calc(100vh - 61px); overflow: hidden; }
+
+    /* ג”€ג”€ Left panel: setup ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    .setup-panel {
+      width: 300px;
+      min-width: 300px;
+      background: #1e293b;
+      border-right: 1px solid #334155;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .panel-title {
+      padding: 16px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #64748b;
+      border-bottom: 1px solid #334155;
+    }
+    .setup-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    label { font-size: 12px; color: #94a3b8; margin-bottom: 4px; display: block; }
+    select, input[type=text] {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    select:focus, input[type=text]:focus { border-color: #38bdf8; }
+
+    .btn {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all .15s;
+    }
+    .btn-primary { background: #38bdf8; color: #0f172a; }
+    .btn-primary:hover:not(:disabled) { background: #7dd3fc; }
+    .btn-danger  { background: #ef4444; color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #f87171; }
+    .btn:disabled { opacity: .4; cursor: default; }
+
+    /* ג”€ג”€ State card ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    .state-card {
+      margin: 0 16px 8px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .state-card .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .state-card .row:last-child { margin-bottom: 0; }
+    .state-card .key { font-size: 11px; color: #64748b; }
+    .state-card .val { font-size: 12px; font-weight: 600; }
+    .badge {
+      padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+    .badge-asking    { background: #1e40af33; color: #93c5fd; }
+    .badge-waiting   { background: #166534aa; color: #86efac; }
+    .badge-repeating { background: #92400e44; color: #fcd34d; }
+    .badge-rephrasing{ background: #6d28d944; color: #c4b5fd; }
+    .badge-confirming{ background: #b45309aa; color: #fde68a; }
+    .badge-fallback  { background: #7f1d1d44; color: #fca5a5; }
+    .badge-done      { background: #14532d44; color: #4ade80; }
+    .badge-error     { background: #7f1d1d88; color: #f87171; }
+    .badge-greeting  { background: #1e293b; color: #94a3b8; }
+
+    /* ג”€ג”€ Answers ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    .answers-box { margin: 0 16px 16px; }
+    .answers-box .a-title { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
+    .answer-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+    .answer-row .a-key { color: #64748b; flex: 1; }
+    .answer-row .a-val { color: #4ade80; font-weight: 600; }
+
+    /* ג”€ג”€ Centre: call screen ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    .call-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .call-header {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .call-status-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #64748b;
+      flex-shrink: 0;
+    }
+    .call-status-dot.active { background: #4ade80; animation: pulse 1.4s infinite; }
+    .call-status-dot.done   { background: #ef4444; }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 0 0 #4ade8066; }
+      50%      { box-shadow: 0 0 0 6px #4ade8000; }
+    }
+    .call-info { flex: 1; }
+    .call-info .ci-main { font-size: 14px; font-weight: 600; }
+    .call-info .ci-sub  { font-size: 11px; color: #64748b; }
+
+    /* ג”€ג”€ Transcript ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    #transcript {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .bubble-wrap { display: flex; flex-direction: column; }
+    .bubble-wrap.bot  { align-items: flex-start; }
+    .bubble-wrap.caller { align-items: flex-end; }
+    .bubble-label { font-size: 10px; color: #475569; margin-bottom: 3px; padding: 0 4px; }
+    .bubble {
+      max-width: 72%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.5;
+      position: relative;
+    }
+    .bubble.bot {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-bottom-left-radius: 4px;
+      color: #e2e8f0;
+    }
+    .bubble.caller {
+      background: #0369a1;
+      border-bottom-right-radius: 4px;
+      color: #fff;
+    }
+    .bubble .action-tag {
+      display: inline-block;
+      font-size: 10px;
+      background: #0f172a;
+      color: #38bdf8;
+      border-radius: 4px;
+      padding: 1px 6px;
+      margin-bottom: 4px;
+    }
+    .empty-state {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      color: #334155;
+    }
+    .empty-state svg { width: 56px; height: 56px; opacity: .4; }
+    .empty-state p { font-size: 14px; }
+
+    /* ג”€ג”€ Input bar ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    .input-bar {
+      border-top: 1px solid #334155;
+      background: #1e293b;
+      padding: 14px 20px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    #caller-input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+    }
+    #caller-input:focus { border-color: #38bdf8; }
+    #caller-input:disabled { opacity: .4; }
+    #send-btn {
+      background: #0369a1;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    #send-btn:hover:not(:disabled) { background: #0284c7; }
+    #send-btn:disabled { opacity: .4; cursor: default; }
+
+    .quick-replies { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; padding: 0 20px; }
+    .qr {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: all .12s;
+    }
+    .qr:hover { border-color: #38bdf8; color: #38bdf8; }
+
+    /* ג”€ג”€ Mic button ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    #mic-btn {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      border: none;
+      background: #0f172a;
+      color: #64748b;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .15s;
+      flex-shrink: 0;
+    }
+    #mic-btn:hover:not(:disabled) { background: #1e293b; color: #e2e8f0; }
+    #mic-btn.listening {
+      background: #dc2626;
+      color: #fff;
+      animation: mic-pulse 1s infinite;
+    }
+    #mic-btn:disabled { opacity: .3; cursor: default; }
+    @keyframes mic-pulse {
+      0%,100% { box-shadow: 0 0 0 0 #dc262666; }
+      50%      { box-shadow: 0 0 0 8px #dc262600; }
+    }
+    .listening-indicator {
+      font-size: 11px; color: #dc2626; font-style: italic;
+      padding: 0 4px;
+    }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">נ™ Voice AI Pipeline</div>
+    <div class="subtitle">SAA-50 ֲ· Call Simulator</div>
+  </div>
+  <a href="/">ג† Campaign Builder</a>
+  <a href="/dashboard">Dashboard</a>
+  <a href="/docs" target="_blank">API Docs ג†—</a>
+  <button id="voice-toggle" onclick="toggleVoice()" style="margin-left:8px;background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">נ” Voice ON</button>
+</header>
+
+<div class="app">
+
+  <!-- LEFT: Setup + state -->
+  <div class="setup-panel">
+    <div class="panel-title">Call Setup</div>
+    <div class="setup-body">
+      <div>
+        <label>Campaign</label>
+        <select id="campaign-select"><option value="">Loadingג€¦</option></select>
+      </div>
+      <div>
+        <label>Caller phone number</label>
+        <input type="text" id="phone-input" value="+1-555-0100" />
+      </div>
+      <div>
+        <label>Locale</label>
+        <input type="text" id="locale-input" value="en-US" />
+      </div>
+      <button class="btn btn-primary" id="start-btn">ג–¶ Start Call</button>
+      <button class="btn btn-danger"  id="end-btn" disabled>ג¬› End Call</button>
+    </div>
+
+    <div class="panel-title" style="margin-top:8px">Session State</div>
+    <div class="state-card" id="state-card" style="display:none">
+      <div class="row"><span class="key">State</span><span class="val" id="s-state">ג€”</span></div>
+      <div class="row"><span class="key">Question</span><span class="val" id="s-question">ג€”</span></div>
+      <div class="row"><span class="key">Retries</span><span class="val" id="s-retries">0</span></div>
+      <div class="row"><span class="key">Turns</span><span class="val" id="s-turns">0</span></div>
+    </div>
+
+    <div class="answers-box" id="answers-box" style="display:none">
+      <div class="a-title">Collected Answers</div>
+      <div id="answers-list"></div>
+    </div>
+  </div>
+
+  <!-- CENTRE: Transcript -->
+  <div class="call-panel">
+    <div class="call-header">
+      <div class="call-status-dot" id="status-dot"></div>
+      <div class="call-info">
+        <div class="ci-main" id="ci-main">No active call</div>
+        <div class="ci-sub"  id="ci-sub">Select a campaign and press Start Call</div>
+      </div>
+    </div>
+
+    <div id="transcript">
+      <div class="empty-state" id="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 18.5A6.5 6.5 0 1 0 5.5 12v.5A6.5 6.5 0 0 0 12 18.5z"/>
+          <path d="M12 18.5v3M9 21.5h6"/>
+        </svg>
+        <p>Start a call to see the Voice AI Pipeline in action</p>
+      </div>
+    </div>
+
+    <div class="quick-replies" id="quick-replies" style="display:none">
+      <span class="qr" onclick="setInput('Can you repeat that?')">נ” Repeat</span>
+      <span class="qr" onclick="setInput('Can you rephrase that?')">נ’¬ Rephrase</span>
+      <span class="qr" onclick="setInput('Not now, call me back later')">נ« Not Now</span>
+      <span class="qr" onclick="setInput('Yes')">ג… Yes</span>
+      <span class="qr" onclick="setInput('No')">ג No</span>
+      <span class="qr" onclick="setInput('Skip')">ג­ Skip</span>
+    </div>
+
+    <div class="input-bar">
+      <button id="mic-btn" disabled title="Hold to speak">נ₪</button>
+      <input id="caller-input" type="text" placeholder="Speak or type your replyג€¦" disabled />
+      <span class="listening-indicator" id="listen-label" style="display:none">Listeningג€¦</span>
+      <button id="send-btn" disabled>Send</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = '';   // same origin
+let sessionId = null;
+let campaignId = null;
+let turnCount = 0;
+
+// ג”€ג”€ Web Speech API (browser TTS) ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+const synth = window.speechSynthesis;
+let voiceEnabled = true;
+let selectedVoice = null;
+
+function loadVoices() {
+  const voices = synth.getVoices();
+  // prefer English voices
+  selectedVoice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
+                  voices.find(v => v.lang.startsWith('en')) ||
+                  voices[0] || null;
+}
+loadVoices();
+if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = loadVoices;
+
+function speak(text) {
+  if (!voiceEnabled || !synth) return;
+  synth.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.voice = selectedVoice;
+  utt.rate  = 0.95;
+  utt.pitch = 1.0;
+  synth.speak(utt);
+}
+
+// ג”€ג”€ Boot ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+async function loadCampaigns() {
+  const res = await fetch(`${API}/api/campaigns`);
+  const list = await res.json();
+  const sel = document.getElementById('campaign-select');
+  sel.innerHTML = '<option value="">ג€” select ג€”</option>';
+  list.filter(c => c.status === 'active').forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = `${c.name} (${c.language})`;
+    sel.appendChild(o);
+  });
+  if (!list.filter(c => c.status === 'active').length) {
+    sel.innerHTML = '<option value="">No active campaigns</option>';
+  }
+}
+loadCampaigns();
+
+// ג”€ג”€ Helpers ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+function setInput(text) {
+  const inp = document.getElementById('caller-input');
+  inp.value = text;
+  inp.focus();
+}
+
+function fmt(ms) {
+  if (ms === null || ms === undefined) return 'ג€”';
+  return ms.toFixed(1) + ' ms';
+}
+
+function stateBadge(state) {
+  const s = (state || 'unknown').split('.').pop().toLowerCase();
+  return `<span class="badge badge-${s}">${s}</span>`;
+}
+
+function addBubble(role, text, actionTag) {
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.remove();
+
+  const wrap = document.createElement('div');
+  wrap.className = `bubble-wrap ${role}`;
+
+  const label = document.createElement('div');
+  label.className = 'bubble-label';
+  label.textContent = role === 'bot' ? 'נ₪– AI Bot' : 'נ§‘ Caller';
+  wrap.appendChild(label);
+
+  const bubble = document.createElement('div');
+  bubble.className = `bubble ${role}`;
+  if (actionTag) {
+    bubble.innerHTML = `<div class="action-tag">${actionTag}</div><br>${text}`;
+  } else {
+    bubble.textContent = text;
+  }
+  wrap.appendChild(bubble);
+
+  const t = document.getElementById('transcript');
+  t.appendChild(wrap);
+  t.scrollTop = t.scrollHeight;
+}
+
+// ג”€ג”€ Web Speech Recognition (mic input) ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    isListening = true;
+    document.getElementById('mic-btn').classList.add('listening');
+    document.getElementById('listen-label').style.display = 'inline';
+    document.getElementById('caller-input').value = '';
+    document.getElementById('caller-input').placeholder = 'Listeningג€¦';
+  };
+
+  recognition.onresult = (e) => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t;
+      else interim += t;
+    }
+    document.getElementById('caller-input').value = final || interim;
+  };
+
+  recognition.onend = () => {
+    isListening = false;
+    document.getElementById('mic-btn').classList.remove('listening');
+    document.getElementById('listen-label').style.display = 'none';
+    document.getElementById('caller-input').placeholder = 'Speak or type your replyג€¦';
+    const text = document.getElementById('caller-input').value.trim();
+    if (text) sendTurn();
+  };
+
+  recognition.onerror = () => {
+    isListening = false;
+    document.getElementById('mic-btn').classList.remove('listening');
+    document.getElementById('listen-label').style.display = 'none';
+    document.getElementById('caller-input').placeholder = 'Speak or type your replyג€¦';
+  };
+}
+
+document.getElementById('mic-btn').addEventListener('click', () => {
+  if (!recognition) return;
+  if (isListening) {
+    recognition.stop();
+  } else {
+    recognition.lang = document.getElementById('locale-input').value || 'en-US';
+    recognition.start();
+  }
+});
+
+function updateState(data) {
+  document.getElementById('s-state').innerHTML    = stateBadge(data.current_state || 'unknown');
+  document.getElementById('s-question').textContent = data.current_question_key || 'ג€”';
+  document.getElementById('s-retries').textContent  = 'ג€”';
+  document.getElementById('s-turns').textContent    = turnCount;
+  document.getElementById('state-card').style.display = 'block';
+}
+
+function updateAnswers(answers) {
+  const box  = document.getElementById('answers-box');
+  const list = document.getElementById('answers-list');
+  if (!answers || !Object.keys(answers).length) return;
+  list.innerHTML = Object.entries(answers).map(([k,v]) =>
+    `<div class="answer-row"><span class="a-key">${k}</span><span class="a-val">${v}</span></div>`
+  ).join('');
+  box.style.display = 'block';
+}
+
+// ג”€ג”€ Start call ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+document.getElementById('start-btn').addEventListener('click', async () => {
+  const cid = document.getElementById('campaign-select').value;
+  if (!cid) { alert('Please select an active campaign.'); return; }
+
+  campaignId = cid;
+  turnCount = 0;
+
+  document.getElementById('start-btn').disabled = true;
+  document.getElementById('end-btn').disabled = false;
+  document.getElementById('caller-input').disabled = false;
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('quick-replies').style.display = 'flex';
+
+  // clear transcript
+  const t = document.getElementById('transcript');
+  t.innerHTML = '';
+  document.getElementById('answers-box').style.display = 'none';
+
+  const dot = document.getElementById('status-dot');
+  dot.className = 'call-status-dot active';
+  document.getElementById('ci-main').textContent = `Call in progress ג€” Campaign #${cid}`;
+  document.getElementById('ci-sub').textContent  = document.getElementById('phone-input').value;
+
+  try {
+    const res = await fetch(`${API}/api/campaigns/${cid}/voice/sessions`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        participant_phone: document.getElementById('phone-input').value,
+        locale: document.getElementById('locale-input').value,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to start session');
+
+    sessionId = data.session_id;
+    addBubble('bot', data.response_text, data.dialogue_action.replace(/_/g,' '));
+    speak(data.response_text);
+    updateState(data);
+    document.getElementById('mic-btn').disabled = false;
+    document.getElementById('caller-input').focus();
+  } catch (e) {
+    alert('Error: ' + e.message);
+    resetUI();
+  }
+});
+
+// ג”€ג”€ Send turn ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+async function sendTurn() {
+  const inp = document.getElementById('caller-input');
+  const text = inp.value.trim();
+  if (!text || !sessionId) return;
+
+  inp.value = '';
+  inp.disabled = true;
+  document.getElementById('send-btn').disabled = true;
+
+  turnCount++;
+  addBubble('caller', text);
+
+  try {
+    const res = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}/turn`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ transcript: text, audio_duration_ms: text.length * 60 })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Turn failed');
+
+    addBubble('bot', data.response_text, data.dialogue_action.replace(/_/g,' '));
+    speak(data.response_text);
+    updateState(data);
+
+    // fetch full state for answers + retries
+    const stRes = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
+    if (stRes.ok) {
+      const st = await stRes.json();
+      updateAnswers(st.answers);
+      document.getElementById('s-retries').textContent = st.retry_count ?? 'ג€”';
+    }
+
+    if (data.session_complete) {
+      endCall(true);
+      return;
+    }
+  } catch (e) {
+    addBubble('bot', 'Error: ' + e.message);
+  }
+
+  inp.disabled = false;
+  document.getElementById('send-btn').disabled = false;
+  inp.focus();
+}
+
+document.getElementById('send-btn').addEventListener('click', sendTurn);
+document.getElementById('caller-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendTurn();
+});
+
+// ג”€ג”€ End call ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+document.getElementById('end-btn').addEventListener('click', () => endCall(false));
+
+async function endCall(completed) {
+  if (sessionId) {
+    try {
+      await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}`, { method: 'DELETE' });
+    } catch (_) {}
+  }
+  const dot = document.getElementById('status-dot');
+  dot.className = 'call-status-dot done';
+  document.getElementById('ci-main').textContent = completed ? 'ג… Call completed' : 'ג¬› Call ended';
+  document.getElementById('ci-sub').textContent  = `${turnCount} turn(s) ֲ· session ${(sessionId||'').slice(0,8)}ג€¦`;
+  resetUI();
+  sessionId = null;
+}
+
+function resetUI() {
+  document.getElementById('start-btn').disabled = false;
+  document.getElementById('end-btn').disabled = true;
+  document.getElementById('caller-input').disabled = true;
+  document.getElementById('send-btn').disabled = true;
+  document.getElementById('mic-btn').disabled = true;
+  if (recognition && isListening) recognition.stop();
+  synth.cancel();
+}
+
+function toggleVoice() {
+  voiceEnabled = !voiceEnabled;
+  const btn = document.getElementById('voice-toggle');
+  btn.textContent = voiceEnabled ? 'נ” Voice ON' : 'נ”‡ Voice OFF';
+  btn.style.color = voiceEnabled ? '#4ade80' : '#64748b';
+  if (!voiceEnabled) synth.cancel();
+}
+</script>
+</body>
+</html>
+

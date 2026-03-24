@@ -1,187 +1,173 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VoiceSurvey AI - Campaign Builder</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <div class="bg-orb bg-orb-a"></div>
-    <div class="bg-orb bg-orb-b"></div>
+﻿<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>ניהול סקרים - VoiceSurvey AI</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .hidden { display: none !important; }
+    .builder-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 24px;}
+    .subpanel { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .subpanel h3 { font-size: 16px; margin-bottom: 16px; }
+    .form-group { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 13px; color: var(--text-muted); }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 14px;}
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .btn-danger { background: #ef4444; color: white; border: none; }
+    .list { list-style: none; padding: 0; margin-top: 12px; display: flex; flex-direction: column; gap: 8px;}
+    .list li { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; font-size: 13px;}
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 12px 24px; border-radius: 8px; z-index: 9999; transition: opacity 0.3s; }
+  </style>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
 
-    <main class="layout">
-      <header class="header">
-        <h1>Survey Management (Campaign Builder)</h1>
-        <p>
-          Build opt-in voice survey campaigns with question flows, branching logic,
-          and participant uploads.
-        </p>
-      </header>
+  <header class="top-header">
+    <div class="header-right">
+      <div class="logo-title">VoiceSurvey AI</div>
+      <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
+    </div>
+    
+    <nav class="nav-tabs">
+      <a href="/static/dashboard.html" class="nav-tab">דשבורד</a>
+      <a href="/static/index.html" class="nav-tab active">ניהול סקרים</a>
+      <a href="/static/voice.html" class="nav-tab">שיחות חיות</a>
+      <a href="#" class="nav-tab">אנליטיקה</a>
+      <a href="#" class="nav-tab">הגדרות</a>
+    </nav>
 
-      <section class="panel panel-create">
-        <h2>Create Campaign</h2>
-        <form id="campaign-form" class="grid-form">
-          <label>
-            Name
-            <input name="name" required minlength="2" placeholder="Brand NPS Q2" />
-          </label>
-          <label>
-            Language
-            <input name="language" value="en" maxlength="16" />
-          </label>
-          <label>
-            Timezone
-            <input name="timezone" value="UTC" maxlength="64" />
-          </label>
-          <label class="full">
-            Consent Text
-            <textarea
-              name="consent_text"
-              required
-              minlength="5"
-              placeholder="This call is recorded for quality and research purposes..."
-            ></textarea>
-          </label>
-          <button type="submit">Create Campaign</button>
-        </form>
-      </section>
+    <div class="header-left">
+      <div class="top-badge blue">4 בוטים AI פעילים</div>
+      <div class="top-badge green">מערכת פעילה</div>
+    </div>
+  </header>
 
-      <section class="panel">
-        <h2>Campaign Cards + Quick Actions</h2>
-        <div id="campaign-cards" class="cards"></div>
-      </section>
+  <div class="page-container">
+    <div class="page-header">
+      <div class="page-title">
+        <h1>ניהול סקרים</h1>
+        <p>צור וערוך סקרים שיבוצעו על ידי AI Voice Agents</p>
+      </div>
+      <button class="btn-primary" onclick="document.getElementById('create-panel').classList.toggle('hidden')">+ סקר חדש</button>
+    </div>
 
-      <section id="builder-panel" class="panel hidden">
-        <h2 id="builder-title">Campaign Builder</h2>
-        <p id="execution-status" class="hint">Execution: unknown</p>
+    <div class="card" style="background-color: var(--primary-light); padding: 12px 20px; border-color: #bfdbfe; color: var(--primary); display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
+      <b>🤖 סקרים אוטומטיים מבוססי AI</b>
+      <span style="font-size: 14px;">כל סקר מבוצע ע"י בוט חכם שמבין דיבור טבעי, מתאים את עצמו למרואיין ומנהל שיחה דינמית.</span>
+    </div>
 
-        <div class="builder-grid">
-          <article class="subpanel">
-            <h3>Question Builder (Rating/MCQ/Free-Text)</h3>
-            <form id="question-form" class="stack-form">
-              <input name="key" required placeholder="q_nps" />
-              <input
-                name="prompt"
-                required
-                placeholder="How likely are you to recommend us?"
-              />
-              <div class="row">
-                <select name="question_type">
-                  <option value="rating">Rating</option>
-                  <option value="mcq">MCQ</option>
-                  <option value="free_text">Free Text</option>
-                </select>
-                <input
-                  name="options"
-                  placeholder="MCQ options, comma-separated"
-                />
-                <label class="check">
-                  <input name="required" type="checkbox" checked /> Required
-                </label>
-              </div>
-              <button type="submit">Add Question</button>
-            </form>
-            <ul id="question-list" class="list"></ul>
-          </article>
+    <!-- Create Panel -->
+    <div id="create-panel" class="card hidden" style="margin-bottom: 24px; border-color: var(--primary);">
+      <h2 style="margin-bottom: 16px; font-size: 18px;">יצירת סקר חדש</h2>
+      <form id="campaign-form" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="form-group"><label>שם הסקר</label><input name="name" required minlength="2" placeholder="לדוגמה: סקר שביעות רצון"></div>
+        <div class="form-group"><label>שפה (למשל: he, en)</label><input name="language" value="he"></div>
+        <div class="form-group"><label>אזור זמן</label><input name="timezone" value="Asia/Jerusalem"></div>
+        <div class="form-group"><label>טקסט יאשר הקלטה (Consent)</label><input name="consent_text" required value="שיחה זו מוקלטת לצורכי מחקר ואיכות."></div>
+        <div class="form-group" style="grid-column: span 2;"><button type="submit" class="btn-primary">צור קמפיין</button></div>
+      </form>
+    </div>
 
-          <article class="subpanel">
-            <h3>Skip Logic / Branching</h3>
-            <form id="rule-form" class="stack-form">
-              <select name="source_question_id" id="rule-source"></select>
-              <div class="row">
-                <select name="operator">
-                  <option value="equals">equals</option>
-                  <option value="not_equals">not_equals</option>
-                  <option value="contains">contains</option>
-                  <option value="gt">gt</option>
-                  <option value="lt">lt</option>
-                </select>
-                <input name="value" required placeholder="Condition value" />
-              </div>
-              <div class="row">
-                <select name="action" id="rule-action">
-                  <option value="goto">goto</option>
-                  <option value="end">end</option>
-                  <option value="escalate">escalate</option>
-                </select>
-                <select name="target_question_id" id="rule-target"></select>
-                <input name="priority" type="number" value="100" />
-              </div>
-              <button type="submit">Add Rule</button>
-            </form>
-            <ul id="rule-list" class="list"></ul>
-          </article>
+    <!-- Campaigns Grid -->
+    <div id="campaign-cards" class="grid-2"></div>
 
-          <article class="subpanel">
-            <h3>Opt-in Participants Upload</h3>
-            <p class="hint">CSV columns: phone_number, full_name, locale</p>
-            <form id="upload-form" class="stack-form">
-              <input name="file" type="file" accept=".csv" required />
-              <button type="submit">Upload CSV</button>
-            </form>
-            <ul id="participant-list" class="list"></ul>
-          </article>
+    <!-- Builder Panel -->
+    <section id="builder-panel" class="hidden" style="margin-top: 40px; border-top: 2px solid var(--border); padding-top: 24px;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 id="builder-title" style="font-size: 20px;">עורך סקר</h2>
+        <span id="execution-status" class="status-badge" style="background:#f1f5f9; color:#475569;">סטטוס: לא ידוע</span>
+      </div>
 
-          <article class="subpanel">
-            <h3>Calling Policies (Windows/Retry/Cooldown)</h3>
-            <form id="policy-form" class="stack-form">
-              <div class="row">
-                <label>
-                  Window Start Hour
-                  <input name="window_start_hour" type="number" min="0" max="23" value="9" />
-                </label>
-                <label>
-                  Window End Hour
-                  <input name="window_end_hour" type="number" min="1" max="24" value="18" />
-                </label>
-              </div>
-              <div class="row">
-                <label>
-                  Max Attempts
-                  <input name="max_attempts" type="number" min="1" max="10" value="3" />
-                </label>
-                <label>
-                  Retry Delay (minutes)
-                  <input name="retry_delay_minutes" type="number" min="1" max="1440" value="30" />
-                </label>
-              </div>
-              <div class="row">
-                <label>
-                  Cooldown (hours)
-                  <input name="cooldown_hours" type="number" min="0" max="168" value="24" />
-                </label>
-                <label>
-                  Max Calls/Minute
-                  <input name="max_calls_per_minute" type="number" min="1" max="500" value="10" />
-                </label>
-              </div>
-              <label class="check">
-                <input name="enabled" type="checkbox" checked /> Policy Enabled
-              </label>
-              <button type="submit">Save Policy</button>
-            </form>
-          </article>
-
-          <article class="subpanel">
-            <h3>Execution Activity</h3>
-            <div class="actions">
-              <button id="refresh-attempts" type="button" class="alt">Refresh Attempts</button>
+      <div class="builder-grid">
+        <article class="subpanel">
+          <h3>שאלות (Rating/MCQ/Text)</h3>
+          <form id="question-form">
+            <div class="form-group"><input name="key" required placeholder="מזהה שאלה (למשל: q1)" /></div>
+            <div class="form-group"><textarea name="prompt" required placeholder="מה תרצה לשאול?"></textarea></div>
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <select name="question_type" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;">
+                <option value="rating">דירוג (Rating)</option>
+                <option value="mcq">אמריקאי (MCQ)</option>
+                <option value="free_text">טקסט חופשי</option>
+              </select>
+              <input name="options" placeholder="אפשרויות (מופרד בפסיק)" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;" />
             </div>
-            <ul id="attempt-list" class="list"></ul>
-          </article>
-        </div>
-      </section>
+            <div style="margin-bottom:12px;"><label><input name="required" type="checkbox" checked /> שאלת חובה</label></div>
+            <button type="submit" class="btn-primary" style="width:100%">הוסף שאלה</button>
+          </form>
+          <ul id="question-list" class="list"></ul>
+        </article>
 
-      <div id="toast" class="toast hidden"></div>
-    </main>
+        <article class="subpanel">
+          <h3>התניות דילוג (Skip Logic)</h3>
+          <form id="rule-form">
+            <div class="form-group"><select name="source_question_id" id="rule-source"></select></div>
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <select name="operator" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;">
+                <option value="equals">שווה ל</option>
+                <option value="not_equals">שונה מ</option>
+                <option value="contains">מכיל</option>
+                <option value="gt">גדול מ-</option>
+                <option value="lt">קטן מ-</option>
+              </select>
+              <input name="value" required placeholder="ערך" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;" />
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <select name="action" id="rule-action" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;">
+                <option value="goto">עבור ל-</option>
+                <option value="end">סיים שיחה</option>
+                <option value="escalate">העבר לנציג</option>
+              </select>
+              <select name="target_question_id" id="rule-target" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;"></select>
+            </div>
+            <div class="form-group"><label>עדיפות</label><input name="priority" type="number" value="100" /></div>
+            <button type="submit" class="btn-primary" style="width:100%">הוסף התניה</button>
+          </form>
+          <ul id="rule-list" class="list"></ul>
+        </article>
 
-    <script src="/static/app.js" defer></script>
-  </body>
+        <article class="subpanel">
+          <h3>ייבוא משתתפים (CSV)</h3>
+          <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">עמודות: phone_number, full_name, locale</p>
+          <form id="upload-form">
+            <div class="form-group"><input name="file" type="file" accept=".csv" required /></div>
+            <button type="submit" class="btn-primary" style="background:#10b981; width:100%">העלה CSV</button>
+          </form>
+          <ul id="participant-list" class="list"></ul>
+        </article>
+
+        <article class="subpanel">
+          <h3>הגדרות חיוג</h3>
+          <form id="policy-form">
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <div class="form-group" style="flex:1"><label>שעת התחלה</label><input name="window_start_hour" type="number" min="0" max="23" value="9" /></div>
+              <div class="form-group" style="flex:1"><label>שעת סיום</label><input name="window_end_hour" type="number" min="1" max="24" value="18" /></div>
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <div class="form-group" style="flex:1"><label>מקסימום ניסיונות</label><input name="max_attempts" type="number" min="1" max="10" value="3" /></div>
+              <div class="form-group" style="flex:1"><label>השהייה (דקות)</label><input name="retry_delay_minutes" type="number" min="1" value="30" /></div>
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <div class="form-group" style="flex:1"><label>צינון (שעות)</label><input name="cooldown_hours" type="number" min="0" value="24" /></div>
+              <div class="form-group" style="flex:1"><label>קצב (שיחות/דקה)</label><input name="max_calls_per_minute" type="number" min="1" value="10" /></div>
+            </div>
+            <div style="margin-bottom:12px;"><label><input name="enabled" type="checkbox" checked /> מדיניות פעילה</label></div>
+            <button type="submit" class="btn-primary" style="width:100%">שמור מדיניות</button>
+          </form>
+        </article>
+
+        <article class="subpanel" style="grid-column: 1 / -1;">
+          <h3>היסטוריית חיוג</h3>
+          <div style="margin-bottom: 12px;">
+            <button id="refresh-attempts" type="button" style="padding:6px 12px; background:white; border:1px solid var(--border); border-radius:6px; cursor:pointer;">רענן ניסיונות</button>
+          </div>
+          <ul id="attempt-list" class="list" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;"></ul>
+        </article>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</body>
 </html>
