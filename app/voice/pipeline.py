@@ -91,6 +91,7 @@ class VoicePipeline:
     async def start_session(self, ctx: FSMContext) -> TurnResult:
         """Greet the participant and ask the first question."""
         ctx, action, text = self._dm.start(ctx)
+        ctx.log("bot_response", action=str(action), text=text)
         audio = await self._synthesise(text, ctx)
         return TurnResult(
             session_id=ctx.session_id,
@@ -125,8 +126,14 @@ class VoicePipeline:
         nlu_result = self._nlu.classify(final_text, question_type=question_type)
         intent = nlu_result.primary
 
+        # Log caller transcript before dialogue processes it
+        ctx.log("caller_input", text=final_text)
+
         # --- Dialogue ---
         ctx, action, response_text = self._dm.process(ctx, intent)
+
+        # Log bot response text so watch-mode can reconstruct the transcript
+        ctx.log("bot_response", action=str(action), text=response_text)
 
         # --- TTS ---
         tts_m = TTSMetrics()
