@@ -233,7 +233,75 @@ loadLiveCalls();
 setInterval(loadLiveCalls, 5000);
 
 // ── Transcript modal ──────────────────────────────────────────────────────
+let _transcriptPollTimer = null;
+let _transcriptSession = null;
+let _transcriptCampaign = null;
+let _transcriptRenderedCount = 0;
+
+function _messageHtml(e) {
+  if (e.event === 'bot_response') {
+    return `<div style="margin-bottom:10px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:2px;">🤖 בוט</div>
+      <div style="background:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:13px;">${e.text || ''}</div>
+    </div>`;
+  } else {
+    return `<div style="margin-bottom:10px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:2px;">👤 משתתף</div>
+      <div style="background:#dbeafe;padding:8px 12px;border-radius:8px;font-size:13px;color:#1e40af;">${e.text || ''}</div>
+    </div>`;
+  }
+}
+
+function _appendNewMessages(events) {
+  const tl = document.getElementById('transcript-lines');
+  if (!tl) return;
+  const newEvents = events.slice(_transcriptRenderedCount);
+  if (!newEvents.length) return;
+
+  const atBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
+
+  // Remove placeholder if present
+  const placeholder = tl.querySelector('.transcript-placeholder');
+  if (placeholder) placeholder.remove();
+
+  newEvents.forEach(e => {
+    tl.insertAdjacentHTML('beforeend', _messageHtml(e));
+  });
+  _transcriptRenderedCount += newEvents.length;
+
+  if (atBottom) tl.scrollTop = tl.scrollHeight;
+}
+
+function _updateAnswers(answers) {
+  const el = document.getElementById('transcript-answers');
+  if (!el) return;
+  const html = Object.entries(answers || {}).map(([k,v]) =>
+    `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">
+       <span style="color:#64748b;">${k}</span><span style="font-weight:600;color:#0f172a;">${v}</span>
+     </div>`
+  ).join('') || '<div style="color:#94a3b8;font-size:13px;">אין תשובות עדיין</div>';
+  el.innerHTML = html;
+}
+
+async function _refreshTranscript() {
+  if (!_transcriptSession || document.getElementById('transcript-modal').style.display === 'none') return;
+  try {
+    const r = await fetch(`/api/campaigns/${_transcriptCampaign}/voice/sessions/${_transcriptSession}`);
+    if (!r.ok) return;
+    const st = await r.json();
+    const events = (st.history || []).filter(e => e.event === 'bot_response' || e.event === 'caller_input');
+    _appendNewMessages(events);
+    _updateAnswers(st.answers);
+    const stateEl = document.getElementById('transcript-state');
+    if (stateEl) stateEl.textContent = st.current_state;
+  } catch(e) {}
+}
+
 async function showTranscript(sessionId, campaignId) {
+  _transcriptSession = sessionId;
+  _transcriptCampaign = campaignId;
+  _transcriptRenderedCount = 0;
+
   let st;
   try {
     const r = await fetch(`/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
@@ -241,47 +309,40 @@ async function showTranscript(sessionId, campaignId) {
     st = await r.json();
   } catch(e) { alert('שגיאה: ' + e.message); return; }
 
-  const history = st.history || [];
-  const lines = history
-    .filter(e => e.event === 'bot_response' || e.event === 'caller_input')
-    .map(e => {
-      if (e.event === 'bot_response') {
-        return `<div style="margin-bottom:10px;">
-          <div style="font-size:11px;color:#64748b;margin-bottom:2px;">🤖 בוט</div>
-          <div style="background:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:13px;">${e.text}</div>
-        </div>`;
-      } else {
-        return `<div style="margin-bottom:10px;text-align:left;">
-          <div style="font-size:11px;color:#64748b;margin-bottom:2px;text-align:right;">👤 משתתף</div>
-          <div style="background:#dbeafe;padding:8px 12px;border-radius:8px;font-size:13px;color:#1e40af;">${e.text}</div>
-        </div>`;
-      }
-    }).join('');
-
-  const answersHtml = Object.entries(st.answers || {}).map(([k,v]) =>
-    `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">
-       <span style="color:#64748b;">${k}</span><span style="font-weight:600;color:#0f172a;">${v}</span>
-     </div>`
-  ).join('') || '<div style="color:#94a3b8;font-size:13px;">אין תשובות עדיין</div>';
-
   document.getElementById('modal-body').innerHTML = `
     <div style="margin-bottom:16px;">
       <b style="font-size:14px;">📞 ${st.participant_phone}</b>
-      <span style="margin-right:12px;font-size:12px;color:#64748b;">מצב: ${st.current_state}</span>
+      <span id="transcript-state" style="margin-right:12px;font-size:12px;color:#64748b;">${st.current_state}</span>
     </div>
     <div style="margin-bottom:16px;">
       <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">שיחה</div>
-      ${lines || '<div style="color:#94a3b8;font-size:13px;">אין תמלול עדיין — השיחה טרם החלה</div>'}
+      <div id="transcript-lines" style="max-height:320px;overflow-y:auto;">
+        <div class="transcript-placeholder" style="color:#94a3b8;font-size:13px;">אין תמלול עדיין — השיחה טרם החלה</div>
+      </div>
     </div>
     <div>
       <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">תשובות שנאספו</div>
-      ${answersHtml}
+      <div id="transcript-answers"></div>
     </div>`;
+
+  const events = (st.history || []).filter(e => e.event === 'bot_response' || e.event === 'caller_input');
+  _appendNewMessages(events);
+  _updateAnswers(st.answers);
+
   document.getElementById('transcript-modal').style.display = 'flex';
+  const tl = document.getElementById('transcript-lines');
+  if (tl) tl.scrollTop = tl.scrollHeight;
+
+  clearInterval(_transcriptPollTimer);
+  _transcriptPollTimer = setInterval(_refreshTranscript, 2000);
 }
 
 function closeModal() {
   document.getElementById('transcript-modal').style.display = 'none';
+  clearInterval(_transcriptPollTimer);
+  _transcriptPollTimer = null;
+  _transcriptSession = null;
+  _transcriptRenderedCount = 0;
 }
 </script>
 

@@ -30,45 +30,59 @@ _RULES: list[_Rule] = [
         IntentType.REPEAT,
         ["repeat", "say again", "say that again", "what did you say",
          "didn't hear", "didn't catch", "come again", "pardon", "what",
-         "can you repeat", "once more"],
+         "can you repeat", "once more",
+         "חזור", "תחזור", "אמור שוב", "לא שמעתי", "מה אמרת", "תגיד שוב",
+         "לא הצלחתי לשמוע", "שוב בבקשה"],
         base_confidence=0.85,
     ),
     _Rule(
         IntentType.REPHRASE,
         ["rephrase", "different way", "explain", "don't understand",
          "not sure what you mean", "clarify", "what do you mean",
-         "can you explain", "elaborate"],
+         "can you explain", "elaborate",
+         "הסבר", "תסביר", "לא הבנתי", "במילים אחרות", "מה הכוונה",
+         "תנסח אחרת", "לא מובן", "פרט"],
         base_confidence=0.85,
     ),
     _Rule(
         IntentType.NOT_NOW,
         ["not now", "call back", "call me back", "later", "busy",
          "bad time", "not a good time", "another time", "maybe later",
-         "i'll call back", "no thanks"],
+         "i'll call back", "no thanks",
+         "לא עכשיו", "תתקשר מאוחר יותר", "אחר כך", "עסוק", "עסוקה",
+         "לא זמין", "לא זמינה", "מאוחר יותר", "בזמן אחר", "לא תודה"],
         base_confidence=0.88,
     ),
     _Rule(
         IntentType.SKIP,
         ["skip", "next question", "pass", "move on", "don't want to answer",
-         "skip that", "next"],
+         "skip that", "next",
+         "דלג", "תדלג", "שאלה הבאה", "הבא", "עבור", "לא רוצה לענות",
+         "עבור הלאה"],
         base_confidence=0.82,
     ),
     _Rule(
         IntentType.HELP,
         ["help", "i'm confused", "confused", "don't know how", "lost",
-         "assistance", "support"],
+         "assistance", "support",
+         "עזרה", "עזור לי", "לא יודע", "לא יודעת", "מבולבל", "מבולבלת",
+         "איך עונים", "לא מבין", "לא מבינה"],
         base_confidence=0.80,
     ),
     _Rule(
         IntentType.CONFIRM_YES,
         ["yes", "yeah", "yep", "correct", "that's right",
-         "affirmative", "sure", "absolutely", "confirm"],
+         "affirmative", "sure", "absolutely", "confirm",
+         "כן", "נכון", "בדיוק", "אישור", "בסדר", "ודאי", "אכן",
+         "זה נכון", "כן בדיוק", "סבבה"],
         base_confidence=0.90,
     ),
     _Rule(
         IntentType.CONFIRM_NO,
         ["no", "nope", "wrong", "incorrect", "that's wrong", "not right",
-         "negative", "deny", "that's not right"],
+         "negative", "deny", "that's not right",
+         "לא", "שגוי", "טעות", "לא נכון", "זה לא נכון", "לא זה",
+         "לא מדויק", "לא בדיוק"],
         base_confidence=0.90,
     ),
 ]
@@ -85,8 +99,11 @@ _RATING_WORD_MAP = {
 
 # MCQ answer patterns (a/b/c/d or "option one" etc.)
 _MCQ_LETTER_PATTERN = re.compile(r"\b([a-dA-D])\b")
+_MCQ_HEBREW_LETTER_PATTERN = re.compile(r"([אבגד])")
 _MCQ_ORDINAL_PATTERN = re.compile(
-    r"\b(first|second|third|fourth|one|two|three|four)\b", re.IGNORECASE
+    r"\b(first|second|third|fourth|one|two|three|four|"
+    r"ראשון|ראשונה|שני|שנייה|שלישי|שלישית|רביעי|רביעית)\b",
+    re.IGNORECASE,
 )
 
 _ORDINAL_MAP = {
@@ -94,7 +111,13 @@ _ORDINAL_MAP = {
     "second": "2", "two": "2",
     "third": "3", "three": "3",
     "fourth": "4", "four": "4",
+    "ראשון": "1", "ראשונה": "1",
+    "שני": "2", "שנייה": "2",
+    "שלישי": "3", "שלישית": "3",
+    "רביעי": "4", "רביעית": "4",
 }
+
+_HEBREW_LETTER_MAP = {"א": "A", "ב": "B", "ג": "C", "ד": "D"}
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +222,9 @@ class RuleBasedClassifier:
             m = _MCQ_LETTER_PATTERN.search(normalised)
             if m:
                 return m.group(1).upper()
+            m = _MCQ_HEBREW_LETTER_PATTERN.search(normalised)
+            if m:
+                return _HEBREW_LETTER_MAP.get(m.group(1))
             m = _MCQ_ORDINAL_PATTERN.search(normalised)
             if m:
                 return _ORDINAL_MAP.get(m.group(1).lower())
