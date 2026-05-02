@@ -82,6 +82,18 @@ class DialogueManager:
         if intent.intent_type == IntentType.ANSWER:
             return self._handle_answer(ctx, intent)
 
+        # For free_text questions "yes" / "no" are valid answers, not meta-intents
+        if intent.intent_type in (IntentType.CONFIRM_YES, IntentType.CONFIRM_NO) and \
+                q and q.question_type == "free_text":
+            value = "yes" if intent.intent_type == IntentType.CONFIRM_YES else "no"
+            synthetic = Intent(
+                intent_type=IntentType.ANSWER,
+                confidence=0.90,
+                raw_text=intent.raw_text,
+                extracted_value=value,
+            )
+            return self._handle_answer(ctx, synthetic)
+
         # Unknown / low confidence — use a context-aware hint when possible
         return self._fallback.handle(ctx, self._validation_hint(intent.raw_text or "", q))
 

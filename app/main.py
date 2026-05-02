@@ -1271,6 +1271,86 @@ def get_operator_queue() -> dict:
     }
 
 
+_demo_run_tasks: dict[str, asyncio.Task] = {}
+
+
+def _mock_answer_for_question(question_type: str, config: dict, state: str) -> str:
+    """Generate a realistic mock answer based on question type and current FSM state."""
+    import random
+    # When bot is asking to confirm an answer, always reply "yes"
+    if "confirming" in state.lower():
+        return "yes"
+    if question_type == "rating":
+        return str(random.randint(7, 10))
+    if question_type == "mcq":
+        choices = config.get("choices", [])
+        return random.choice(["A", "B", "C", "D"][:max(len(choices), 1)])
+    # free_text
+    responses = [
+        "yes", "the service is great", "everything was fine",
+        "I am satisfied", "no complaints", "it was very helpful"
+    ]
+    return random.choice(responses)
+
+
+async def _run_demo_session(session_id: str, campaign_id: int):
+    """Auto-advance a session by sending simulated answers until complete."""
+    await asyncio.sleep(2)  # brief pause before first auto-turn
+    for _ in range(40):     # safety cap
+        session = _voice_sessions.get(session_id)
+        if not session:
+            break
+        ctx = session.get("ctx")
+        if not ctx:
+            break
+        if session.get("completed_at"):
+            break
+
+        q = ctx.current_question
+        answer = _mock_answer_for_question(
+            q.question_type if q else "free_text",
+            q.config if q else {},
+            str(ctx.state),
+        )
+
+        from .voice.stt.adapter import MockSTTAdapter
+        _pipeline._stt = MockSTTAdapter(responses=[answer], confidence=0.92)
+
+        async def _chunks(text=answer):
+            yield text.encode()
+
+        try:
+            result = await _pipeline.process_turn(ctx, _chunks())
+            session["stt_metrics"].append(result.stt_metrics)
+            session["tts_metrics"].append(result.tts_metrics)
+            if result.session_complete:
+                session["completed_at"] = datetime.now(timezone.utc).isoformat()
+                session["answers"] = dict(ctx.answers)
+                break
+        except Exception:
+            break
+
+        await asyncio.sleep(3)
+
+
+@app.post("/api/sessions/{session_id}/demo-run")
+async def start_demo_run(session_id: str):
+    """Start auto-advancing a session with simulated participant answers.
+
+    Each turn is sent every ~3 seconds so watch-mode observers can follow along.
+    """
+    session = _voice_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+
+    if session_id in _demo_run_tasks and not _demo_run_tasks[session_id].done():
+        return {"status": "already_running", "session_id": session_id}
+
+    task = asyncio.create_task(_run_demo_session(session_id, session["campaign_id"]))
+    _demo_run_tasks[session_id] = task
+    return {"status": "started", "session_id": session_id}
+
+
 @app.delete("/api/operator-queue/{session_id}")
 def resolve_operator_queue_item(session_id: str) -> dict:
     """Remove a session from the operator queue once handled."""

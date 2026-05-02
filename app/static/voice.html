@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
@@ -12,7 +12,7 @@
       <div class="logo-title">VoiceSurvey AI</div>
       <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
     </div>
-    
+
     <nav class="nav-tabs">
       <a href="/static/dashboard.html" class="nav-tab">דשבורד</a>
       <a href="/static/index.html" class="nav-tab">ניהול סקרים</a>
@@ -22,8 +22,8 @@
     </nav>
 
     <div class="header-left">
-      <div class="top-badge" style="background: #fef3c7; color: #b45309; border: 1px solid #fde68a;">1 התערבות נדרשת</div>
-      <div class="top-badge blue">3 AI Agents פעילים</div>
+      <div class="top-badge" style="background: #fef3c7; color: #b45309; border: 1px solid #fde68a;" id="intervention-badge" style="display:none">0 התערבויות נדרשות</div>
+      <div class="top-badge blue" id="active-badge">0 AI Agents פעילים</div>
     </div>
   </header>
 
@@ -43,149 +43,258 @@
       </div>
     </div>
 
-    <div class="grid-2">
-      
-      <!-- Call Card 1 -->
-      <div class="card" style="position: relative;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
-          <div style="display: flex; gap: 12px;">
-            <div style="width: 40px; height: 40px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 18px;">👤</div>
-            <div>
-              <div style="font-weight: 700; font-size: 18px;">שירן לוי</div>
-              <div style="color: var(--text-muted); font-size: 14px;">מחקר שוק - מוצר חדש</div>
-            </div>
-          </div>
-          <div class="status-badge status-active" style="height: fit-content;">פעיל</div>
-        </div>
-
-        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: flex; justify-content: space-between;"><span>1:53 🕒</span> <span>שאלה 3 מתוך 8</span></div>
-        <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: 37%;"></div></div>
-
-        <div style="margin-top: 16px; padding: 10px; background: #f8fafc; border-radius: 8px;">
-          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--success); font-weight: bold;">
-            <span>87.11%</span>
-            <span>Rapport Score 📈</span>
-          </div>
-          <div style="font-size: 11px; color: var(--success); text-align: left; margin-top: 2px;">Voice Mirroring פעיל ✨</div>
-        </div>
-
-        <div style="margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">
-          <button style="background: white; border: 1px solid var(--border); padding: 8px; border-radius: 6px; cursor: pointer;">האזן 🔈</button>
-          <a href="simulator.html" style="background: var(--primary); color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; text-decoration: none; text-align: center;">צפה בשיחה חיה</a>
-        </div>
+    <!-- Live call cards -->
+    <div class="grid-2" id="calls-grid">
+      <div style="grid-column: 1/-1; text-align: center; color: #94a3b8; padding: 40px;">
+        טוען שיחות חיות...
       </div>
-
-      <!-- Call Card 2 -->
-      <div class="card" style="position: relative;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
-          <div style="display: flex; gap: 12px;">
-            <div style="width: 40px; height: 40px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 18px;">👤</div>
-            <div>
-              <div style="font-weight: 700; font-size: 18px;">יוסי כהן</div>
-              <div style="color: var(--text-muted); font-size: 14px;">סקר שביעות רצון לקוחות</div>
-            </div>
-          </div>
-          <div class="status-badge status-active" style="height: fit-content;">פעיל</div>
-        </div>
-
-        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: flex; justify-content: space-between;"><span>2:46 🕒</span> <span>שאלה 5 מתוך 12</span></div>
-        <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: 41%;"></div></div>
-
-        <div style="margin-top: 16px; padding: 10px; background: #f8fafc; border-radius: 8px;">
-          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--success); font-weight: bold;">
-            <span>88.49%</span>
-            <span>Rapport Score 📈</span>
-          </div>
-          <div style="font-size: 11px; color: var(--success); text-align: left; margin-top: 2px;">Voice Mirroring פעיל ✨</div>
-        </div>
-
-        <div style="margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">
-          <button style="background: white; border: 1px solid var(--border); padding: 8px; border-radius: 6px; cursor: pointer;">האזן 🔈</button>
-          <a href="simulator.html" style="background: var(--primary); color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; text-decoration: none; text-align: center;">צפה בשיחה חיה</a>
-        </div>
-      </div>
-
-      <!-- Call Card 3 -->
-      <div class="card" style="position: relative;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
-          <div style="display: flex; gap: 12px;">
-            <div style="width: 40px; height: 40px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 18px;">👤</div>
-            <div>
-              <div style="font-weight: 700; font-size: 18px;">רחל אברהם</div>
-              <div style="color: var(--text-muted); font-size: 14px;">סקר שביעות רצון לקוחות</div>
-            </div>
-          </div>
-          <div class="status-badge status-active" style="height: fit-content;">פעיל</div>
-        </div>
-
-        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: flex; justify-content: space-between;"><span>1:31 🕒</span> <span>שאלה 2 מתוך 12</span></div>
-        <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: 16%;"></div></div>
-
-        <div style="margin-top: 16px; padding: 10px; background: #f8fafc; border-radius: 8px;">
-          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--success); font-weight: bold;">
-            <span>82.41%</span>
-            <span>Rapport Score 📈</span>
-          </div>
-          <div style="font-size: 11px; color: var(--success); text-align: left; margin-top: 2px;">Voice Mirroring פעיל ✨</div>
-        </div>
-
-        <div style="margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">
-          <button style="background: white; border: 1px solid var(--border); padding: 8px; border-radius: 6px; cursor: pointer;">האזן 🔈</button>
-          <a href="simulator.html" style="background: var(--primary); color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; text-decoration: none; text-align: center;">צפה בשיחה חיה</a>
-        </div>
-      </div>
-
-      <!-- Call Card 4 (Intervention needed) -->
-      <div class="card" style="border-width: 2px; border-color: #f59e0b; background: #fffbeb;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
-          <div style="display: flex; gap: 12px;">
-            <div style="width: 40px; height: 40px; border-radius: 50%; background: #fef3c7; display: flex; align-items: center; justify-content: center; font-size: 18px;">👤</div>
-            <div>
-              <div style="font-weight: 700; font-size: 18px;">דוד מזרחי</div>
-              <div style="color: #b45309; font-size: 14px;">סקר עובדים Q4</div>
-            </div>
-          </div>
-          <div class="status-badge" style="height: fit-content; background: #fef3c7; color: #b45309; border: 1px solid #fcd34d;">התערבות נדרשת</div>
-        </div>
-
-        <div style="font-size: 12px; color: #b45309; margin-bottom: 4px; display: flex; justify-content: space-between;"><span>4:18 🕒</span> <span>שאלה 9 מתוך 15</span></div>
-        <div class="progress-bar-bg" style="background: #fde68a;"><div class="progress-bar-fill" style="width: 60%; background: #f59e0b;"></div></div>
-
-        <div style="margin-top: 16px; padding: 10px; background: #fef2f2; border-radius: 8px;">
-          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--danger); font-weight: bold;">
-            <span>48.07%</span>
-            <span>Rapport Score 📉</span>
-          </div>
-          <div style="font-size: 11px; color: var(--danger); text-align: left; margin-top: 2px;">Rapport נמוך</div>
-        </div>
-
-        <div style="margin-top: 16px; font-size: 12px;">
-          <button style="background: #ea580c; color: white; border: none; padding: 8px; border-radius: 6px; width: 100%; font-weight: bold; cursor: pointer;">השתלט על שיחה (מעבר לאנושי) 📞</button>
-        </div>
-      </div>
-
     </div>
 
-    <!-- Smart Priority Queue Block -->
-    <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 24px; padding: 16px;">
+    <!-- Smart Priority Queue -->
+    <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 24px; padding: 16px;" id="queue-section" style="display:none">
       <h3 style="color: #b45309; margin-bottom: 8px;">Smart Priority Queue - מעבר למוקדן אנושי ⚠️</h3>
       <p style="font-size: 14px; color: #92400e; margin-bottom: 12px;">ה-AI מזהה שיחות מורכבות הדורשות התערבות אנושית. השיחות תועדפו לפי דחיפות. מעבר חלק לא נקטע.</p>
-      
-      <div style="background: white; padding: 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #fde68a;">
-        <div style="display: flex; gap: 12px; align-items: center;">
-          <button style="background: #ea580c; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer;">השתלט (AI -> אנושי)</button>
-          <div>
-            <div style="font-weight: bold; font-size: 14px;">דוד מזרחי - סקר עובדים Q4</div>
-            <div style="font-size: 12px; color: var(--text-muted);">זמן המתנה: 0:42 | דחיפות: גבוהה</div>
-          </div>
-        </div>
-        <div style="font-size: 24px;">🚨</div>
-      </div>
+      <div id="queue-list"></div>
     </div>
-
 
   </div>
 
+<script>
+async function loadLiveCalls() {
+  let calls = [], queue = [];
+
+  try {
+    const r = await fetch('/api/live-calls');
+    if (r.ok) calls = (await r.json()).calls || [];
+  } catch(_) {}
+
+  try {
+    const r = await fetch('/api/operator-queue');
+    if (r.ok) queue = (await r.json()).queue || [];
+  } catch(_) {}
+
+  renderCalls(calls);
+  renderQueue(queue);
+
+  // update header badges
+  const activeCalls = calls.filter(c => !c.escalated);
+  document.getElementById('active-badge').textContent = `${activeCalls.length} AI Agents פעילים`;
+
+  const interventionBadge = document.getElementById('intervention-badge');
+  if (queue.length > 0) {
+    interventionBadge.textContent = `${queue.length} התערבויות נדרשות`;
+    interventionBadge.style.display = '';
+  } else {
+    interventionBadge.style.display = 'none';
+  }
+}
+
+function elapsedStr(startedAt) {
+  if (!startedAt) return '';
+  const secs = Math.floor((Date.now() - new Date(startedAt)) / 1000);
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function rapportColor(score) {
+  if (score === null || score === undefined) return '#64748b';
+  if (score >= 0.75) return '#16a34a';
+  if (score >= 0.5)  return '#d97706';
+  return '#dc2626';
+}
+
+function rapportLabel(score) {
+  if (score === null || score === undefined) return 'N/A';
+  if (score >= 0.75) return 'Voice Mirroring פעיל ✨';
+  if (score >= 0.5)  return 'Rapport בינוני';
+  return 'Rapport נמוך ⚠️';
+}
+
+function renderCalls(calls) {
+  const grid = document.getElementById('calls-grid');
+
+  if (!calls.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#94a3b8;padding:40px;">אין שיחות חיות כרגע. הפעל קמפיין ונסה שוב.</div>';
+    return;
+  }
+
+  grid.innerHTML = calls.map(call => {
+    const rapport = call.rapport_score;
+    const pct = call.total_questions ? Math.round(call.questions_answered / call.total_questions * 100) : 0;
+    const color = rapportColor(rapport);
+    const isEscalated = !!call.escalated;
+    const needsIntervention = rapport !== null && rapport < 0.5 && !isEscalated;
+
+    const cardStyle = needsIntervention
+      ? 'border-width: 2px; border-color: #f59e0b; background: #fffbeb;'
+      : 'position: relative;';
+
+    const statusBadge = needsIntervention
+      ? `<div class="status-badge" style="height:fit-content;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;">התערבות נדרשת</div>`
+      : `<div class="status-badge status-active" style="height:fit-content;">פעיל</div>`;
+
+    const rapportBg = needsIntervention ? '#fef2f2' : '#f8fafc';
+    const rapportPct = rapport !== null ? (rapport * 100).toFixed(2) + '%' : 'N/A';
+
+    const progressBarColor = needsIntervention ? '#f59e0b' : 'var(--primary)';
+    const progressBg = needsIntervention ? 'background: #fde68a;' : '';
+
+    const actionButtons = needsIntervention
+      ? `<button onclick="takeOver('${call.session_id}')" style="background:#ea580c;color:white;border:none;padding:8px;border-radius:6px;width:100%;font-weight:bold;cursor:pointer;">השתלט על שיחה (מעבר לאנושי) 📞</button>`
+      : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+           <button onclick="showTranscript('${call.session_id}','${call.campaign_id}')"
+             style="background:white;border:1px solid var(--border);padding:8px;border-radius:6px;cursor:pointer;">
+             📄 תמלול שיחה
+           </button>
+           <a href="/static/simulator.html?session_id=${call.session_id}&campaign_id=${call.campaign_id}"
+              style="background:var(--primary);color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;text-decoration:none;text-align:center;">
+             👁 צפה + שמע
+           </a>
+         </div>`;
+
+    return `
+      <div class="card" style="${cardStyle}">
+        <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
+          <div style="display:flex;gap:12px;">
+            <div style="width:40px;height:40px;border-radius:50%;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:18px;">👤</div>
+            <div>
+              <div style="font-weight:700;font-size:18px;">${call.participant_phone}</div>
+              <div style="color:var(--text-muted);font-size:14px;">Campaign #${call.campaign_id}</div>
+            </div>
+          </div>
+          ${statusBadge}
+        </div>
+
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:flex;justify-content:space-between;">
+          <span>${elapsedStr(call.started_at)} 🕒</span>
+          <span>שאלה ${call.questions_answered} מתוך ${call.total_questions} (${call.current_question_index !== undefined ? 'index ' + call.current_question_index : ''})</span>
+        </div>
+        <div class="progress-bar-bg" style="${progressBg}">
+          <div class="progress-bar-fill" style="width:${pct}%;background:${progressBarColor};"></div>
+        </div>
+
+        <div style="margin-top:16px;padding:10px;background:${rapportBg};border-radius:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:${color};font-weight:bold;">
+            <span>${rapportPct}</span>
+            <span>Rapport Score ${rapport >= 0.75 ? '📈' : '📉'}</span>
+          </div>
+          <div style="font-size:11px;color:${color};text-align:left;margin-top:2px;">${rapportLabel(rapport)}</div>
+        </div>
+
+        <div style="margin-top:16px;font-size:12px;">${actionButtons}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderQueue(queue) {
+  const section = document.getElementById('queue-section');
+  const list = document.getElementById('queue-list');
+
+  if (!queue.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  list.innerHTML = queue.map(item => `
+    <div style="background:white;padding:12px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;border:1px solid #fde68a;margin-bottom:8px;">
+      <div style="display:flex;gap:12px;align-items:center;">
+        <button onclick="resolveQueue('${item.session_id}')" style="background:#ea580c;color:white;border:none;padding:6px 12px;border-radius:4px;font-weight:bold;cursor:pointer;">השתלט (AI -> אנושי)</button>
+        <div>
+          <div style="font-weight:bold;font-size:14px;">${item.participant_phone} - Campaign #${item.campaign_id}</div>
+          <div style="font-size:12px;color:var(--text-muted);">סיבה: ${item.reason} | Rapport: ${item.rapport_score !== null ? (item.rapport_score*100).toFixed(1)+'%' : 'N/A'} | שאלה ${item.current_question_index} מתוך ${item.total_questions}</div>
+        </div>
+      </div>
+      <div style="font-size:24px;">🚨</div>
+    </div>
+  `).join('');
+}
+
+async function takeOver(sessionId) {
+  try {
+    await fetch(`/api/sessions/${sessionId}/handover`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ reason: 'LOW_CONFIDENCE' })
+    });
+    loadLiveCalls();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function resolveQueue(sessionId) {
+  try {
+    await fetch(`/api/operator-queue/${sessionId}`, { method: 'DELETE' });
+    loadLiveCalls();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// Load on start and refresh every 5 seconds
+loadLiveCalls();
+setInterval(loadLiveCalls, 5000);
+
+// ── Transcript modal ──────────────────────────────────────────────────────
+async function showTranscript(sessionId, campaignId) {
+  let st;
+  try {
+    const r = await fetch(`/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
+    if (!r.ok) { alert('לא נמצאה שיחה'); return; }
+    st = await r.json();
+  } catch(e) { alert('שגיאה: ' + e.message); return; }
+
+  const history = st.history || [];
+  const lines = history
+    .filter(e => e.event === 'bot_response' || e.event === 'caller_input')
+    .map(e => {
+      if (e.event === 'bot_response') {
+        return `<div style="margin-bottom:10px;">
+          <div style="font-size:11px;color:#64748b;margin-bottom:2px;">🤖 בוט</div>
+          <div style="background:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:13px;">${e.text}</div>
+        </div>`;
+      } else {
+        return `<div style="margin-bottom:10px;text-align:left;">
+          <div style="font-size:11px;color:#64748b;margin-bottom:2px;text-align:right;">👤 משתתף</div>
+          <div style="background:#dbeafe;padding:8px 12px;border-radius:8px;font-size:13px;color:#1e40af;">${e.text}</div>
+        </div>`;
+      }
+    }).join('');
+
+  const answersHtml = Object.entries(st.answers || {}).map(([k,v]) =>
+    `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">
+       <span style="color:#64748b;">${k}</span><span style="font-weight:600;color:#0f172a;">${v}</span>
+     </div>`
+  ).join('') || '<div style="color:#94a3b8;font-size:13px;">אין תשובות עדיין</div>';
+
+  document.getElementById('modal-body').innerHTML = `
+    <div style="margin-bottom:16px;">
+      <b style="font-size:14px;">📞 ${st.participant_phone}</b>
+      <span style="margin-right:12px;font-size:12px;color:#64748b;">מצב: ${st.current_state}</span>
+    </div>
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">שיחה</div>
+      ${lines || '<div style="color:#94a3b8;font-size:13px;">אין תמלול עדיין — השיחה טרם החלה</div>'}
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">תשובות שנאספו</div>
+      ${answersHtml}
+    </div>`;
+  document.getElementById('transcript-modal').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('transcript-modal').style.display = 'none';
+}
+</script>
+
+<!-- Transcript modal -->
+<div id="transcript-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeModal()">
+  <div style="background:white;border-radius:12px;width:520px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+    <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-weight:700;font-size:16px;">📄 תמלול שיחה</span>
+      <button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#64748b;">&times;</button>
+    </div>
+    <div id="modal-body" style="padding:20px;overflow-y:auto;flex:1;"></div>
+  </div>
+</div>
+
 </body>
 </html>
-
