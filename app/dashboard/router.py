@@ -110,6 +110,17 @@ def get_kpis(
                     pass
     avg_rating = round(sum(all_ratings) / len(all_ratings), 2) if all_ratings else None
 
+    # Average call duration in seconds (completed calls with ended_at set)
+    avg_duration_seconds = (
+        db.query(
+            func.avg(
+                (func.julianday(CallLog.ended_at) - func.julianday(CallLog.started_at)) * 86400
+            )
+        )
+        .filter(CallLog.ended_at.isnot(None))
+        .scalar()
+    )
+
     # Campaign counts (SAA-103 filter context)
     active_campaigns = db.query(func.count(Campaign.id)).filter(Campaign.status == "active").scalar()
     total_participants = db.query(func.count(Participant.id)).scalar()
@@ -124,6 +135,7 @@ def get_kpis(
         "completion_rate": completion_rate,
         "avg_rapport_score": round(avg_rapport, 2) if avg_rapport else None,
         "avg_rating": avg_rating,
+        "avg_duration_seconds": round(avg_duration_seconds) if avg_duration_seconds else None,
         "active_campaigns": active_campaigns,
         "total_participants": total_participants,
         "period": period,

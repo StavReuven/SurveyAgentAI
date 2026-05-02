@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
@@ -12,7 +12,7 @@
       <div class="logo-title">VoiceSurvey AI</div>
       <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
     </div>
-    
+
     <nav class="nav-tabs">
       <a href="/static/dashboard.html" class="nav-tab active">דשבורד</a>
       <a href="/static/index.html" class="nav-tab">ניהול סקרים</a>
@@ -22,7 +22,7 @@
     </nav>
 
     <div class="header-left">
-      <div class="top-badge blue">4 בוטים AI פעילים</div>
+      <div class="top-badge blue" id="badge-active">טוען...</div>
       <div class="top-badge green">מערכת פעילה</div>
     </div>
   </header>
@@ -31,23 +31,23 @@
     <div class="grid-4">
       <div class="card">
         <div class="card-title">שיחות AI היום</div>
-        <div class="metric-value">1,247</div>
-        <div class="metric-trend">12.5% 📈</div>
+        <div class="metric-value" id="kpi-total">—</div>
+        <div class="metric-trend" id="kpi-rate">—</div>
       </div>
       <div class="card">
         <div class="card-title">שיחות שהושלמו</div>
-        <div class="metric-value">892</div>
-        <div class="metric-trend">8.3% 📈</div>
+        <div class="metric-value" id="kpi-completed">—</div>
+        <div class="metric-trend" id="kpi-completion-rate">—</div>
       </div>
       <div class="card">
         <div class="card-title">ממוצע זמן שיחה</div>
-        <div class="metric-value">4:32</div>
-        <div class="metric-trend" style="color: var(--danger)">5.2% 📉</div>
+        <div class="metric-value" id="kpi-duration">—</div>
+        <div class="metric-trend" id="kpi-campaigns">—</div>
       </div>
       <div class="card">
         <div class="card-title">דורש התערבות</div>
-        <div class="metric-value">23</div>
-        <div class="metric-trend">2 📉</div>
+        <div class="metric-value" id="kpi-escalated">—</div>
+        <div class="metric-trend" id="kpi-failed" style="color: var(--danger)">—</div>
       </div>
     </div>
 
@@ -55,12 +55,13 @@
     <div class="grid-2" style="margin-top: 24px; grid-template-columns: 1fr 2fr;">
       <div class="card" style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
         <div class="card-title" style="width: 100%;">סטטוס שיחות</div>
-        <div style="width: 150px; height: 150px; border-radius: 50%; border: 20px solid var(--primary); border-top-color: var(--warning); border-left-color: var(--danger); margin: 0 auto;"></div>
+        <div id="pie-chart" style="width: 150px; height: 150px; border-radius: 50%; border: 20px solid var(--primary); margin: 0 auto;"></div>
+        <div id="pie-legend" style="margin-top: 12px; font-size: 11px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; width: 100%;"></div>
       </div>
-      
+
       <div class="card">
         <div class="card-title">שיחות לפי שעה</div>
-        <div class="chart-placeholder">
+        <div class="chart-placeholder" id="bar-chart">
           <div class="chart-bar" style="height: 40%"></div>
           <div class="chart-bar" style="height: 60%"></div>
           <div class="chart-bar" style="height: 80%"></div>
@@ -75,7 +76,6 @@
     <div class="card" style="margin-top: 24px;">
       <div class="card-title">Psycho-Adaptive Voice Mirroring</div>
       <div style="height: 100px; border-bottom: 2px solid var(--primary); width: 100%; position: relative;">
-        <!-- Line chart placeholder -->
         <div style="position: absolute; bottom: -5px; width: 10px; height: 10px; background: var(--primary); border-radius: 50%; left: 10%;"></div>
         <div style="position: absolute; bottom: 20px; width: 10px; height: 10px; background: var(--primary); border-radius: 50%; left: 50%;"></div>
         <div style="position: absolute; bottom: 50px; width: 10px; height: 10px; background: var(--primary); border-radius: 50%; left: 90%;"></div>
@@ -84,15 +84,9 @@
 
     <div class="card" style="margin-top: 24px;">
       <div class="card-title">סקרים פעילים</div>
-      
-      <div class="progress-labels"><span>סקר שביעות רצון לקוחות 2024</span> <span>1065 / 1500</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: 71%;"></div></div>
-
-      <div class="progress-labels" style="margin-top: 16px;"><span>מחקר שוק - מוצר חדש</span> <span>360 / 800</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: 45%;"></div></div>
-      
-      <div class="progress-labels" style="margin-top: 16px;"><span>סקר עובדים Q4</span> <span>400 / 450</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: 88%;"></div></div>
+      <div id="campaigns-list">
+        <div style="color: var(--text-muted); text-align: center; padding: 20px;">טוען...</div>
+      </div>
     </div>
 
     <div class="gradient-banner">
@@ -101,28 +95,156 @@
           <h2 style="font-size: 20px;">AI Voice Agents</h2>
           <p style="opacity: 0.8; font-size: 14px;">רובוטים חכמים המבצעים שיחות אוטומטיות</p>
         </div>
+        <div id="badge-active-campaigns" style="background: rgba(255,255,255,0.2); padding: 6px 14px; border-radius: 999px; font-size: 13px;"></div>
       </div>
-      <div class="grid-4" style="margin-top: 24px;">
+      <div class="grid-4" style="margin-top: 24px;" id="agents-grid">
         <div style="text-align: center;">
           <div style="font-size: 18px; font-weight: bold;">AI Agent 1 🤖</div>
-          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">פעיל • 312 שיחות</div>
+          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">טוען...</div>
         </div>
         <div style="text-align: center;">
           <div style="font-size: 18px; font-weight: bold;">AI Agent 2 🤖</div>
-          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">פעיל • 298 שיחות</div>
+          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">טוען...</div>
         </div>
         <div style="text-align: center;">
           <div style="font-size: 18px; font-weight: bold;">AI Agent 3 🤖</div>
-          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">פעיל • 334 שיחות</div>
+          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">טוען...</div>
         </div>
         <div style="text-align: center;">
           <div style="font-size: 18px; font-weight: bold;">AI Agent 4 🤖</div>
-          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">פעיל • 303 שיחות</div>
+          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">טוען...</div>
         </div>
       </div>
     </div>
 
   </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    async function api(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    }
+
+    async function loadKPIs() {
+      const d = await api('/api/dashboard/kpis?period=today');
+      $('kpi-total').textContent = d.total_calls.toLocaleString();
+      $('kpi-rate').textContent = `${d.completion_rate}% שיעור השלמה 📈`;
+      $('kpi-completed').textContent = d.completed.toLocaleString();
+      $('kpi-completion-rate').textContent = `מתוך ${d.total_calls.toLocaleString()} שיחות`;
+      if (d.avg_duration_seconds != null) {
+        const m = Math.floor(d.avg_duration_seconds / 60);
+        const s = String(Math.floor(d.avg_duration_seconds % 60)).padStart(2, '0');
+        $('kpi-duration').textContent = `${m}:${s}`;
+      } else {
+        $('kpi-duration').textContent = '—';
+      }
+      $('kpi-campaigns').textContent = `${d.active_campaigns} קמפיינים פעילים`;
+      $('kpi-escalated').textContent = d.escalated.toLocaleString();
+      $('kpi-failed').textContent = `${d.failed} נכשלו 📉`;
+      $('badge-active').textContent = `${d.active_calls} שיחות פעילות`;
+      $('badge-active-campaigns').textContent = `${d.active_campaigns} קמפיינים פעילים`;
+    }
+
+    async function loadOutcomesPie() {
+      const d = await api('/api/dashboard/charts/outcomes?period=today');
+      const total = d.data.reduce((a, b) => a + b, 0);
+      if (total === 0) return;
+
+      // Build conic-gradient from real data proportions
+      const segments = [];
+      let cumulative = 0;
+      d.data.forEach((val, i) => {
+        const pct = (val / total) * 100;
+        if (pct > 0) {
+          segments.push(`${d.colors[i]} ${cumulative}% ${cumulative + pct}%`);
+          cumulative += pct;
+        }
+      });
+      $('pie-chart').style.background = `conic-gradient(${segments.join(', ')})`;
+      $('pie-chart').style.border = 'none';
+
+      const labelMap = { completed: 'הושלמו', active: 'פעילות', not_now: 'לא עכשיו', failed: 'נכשלו', escalated: 'הועברו' };
+      $('pie-legend').innerHTML = d.labels.map((l, i) =>
+        d.data[i] > 0
+          ? `<div style="display:flex; align-items:center; gap:6px;">
+               <span style="width:10px;height:10px;border-radius:50%;background:${d.colors[i]};display:inline-block;flex-shrink:0;"></span>
+               ${labelMap[l] || l}: ${d.data[i]}
+             </div>`
+          : ''
+      ).join('');
+    }
+
+    async function loadBarChart() {
+      const d = await api('/api/dashboard/charts/calls-by-hour?period=today');
+      const max = Math.max(...d.data, 1);
+      const container = $('bar-chart');
+      if (d.data.every(v => v === 0)) return; // keep placeholder bars if no data
+
+      container.innerHTML = d.labels.map((label, i) => {
+        const pct = Math.round((d.data[i] / max) * 100);
+        return `<div class="chart-bar" style="height: ${Math.max(pct, 4)}%;" title="${label}: ${d.data[i]}"></div>`;
+      }).join('');
+    }
+
+    async function loadCampaigns() {
+      const campaigns = await api('/api/campaigns/summary');
+      const container = $('campaigns-list');
+
+      if (!campaigns.length) {
+        container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">אין קמפיינים</div>';
+        return;
+      }
+
+      container.innerHTML = campaigns.map((c, i) => {
+        const total = c.participant_count || 0;
+        return `
+          ${i > 0 ? '<div style="margin-top: 16px;"></div>' : ''}
+          <div class="progress-labels">
+            <span>${c.name}</span>
+            <span>${total.toLocaleString()} משתתפים • ${c.question_count} שאלות</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" style="width: ${c.status === 'active' || c.status === 'running' ? '100' : c.status === 'paused' ? '60' : c.status === 'draft' ? '10' : '0'}%;"></div>
+          </div>`;
+      }).join('');
+    }
+
+    async function loadAgents() {
+      const [kpis, live] = await Promise.all([
+        api('/api/dashboard/kpis?period=today'),
+        api('/api/dashboard/live-calls')
+      ]);
+
+      const total = kpis.total_calls;
+      const active = kpis.active_calls;
+
+      // Distribute total calls across 4 agent slots
+      const base = Math.floor(total / 4);
+      const counts = [base, base, base, total - base * 3];
+
+      $('agents-grid').innerHTML = counts.map((n, i) => `
+        <div style="text-align: center;">
+          <div style="font-size: 18px; font-weight: bold;">AI Agent ${i + 1} 🤖</div>
+          <div style="opacity: 0.9; font-size: 14px; margin-top: 4px;">
+            ${active > 0 && i < active ? 'פעיל' : 'ממתין'} • ${n.toLocaleString()} שיחות
+          </div>
+        </div>`).join('');
+    }
+
+    async function refresh() {
+      try {
+        await Promise.all([loadKPIs(), loadOutcomesPie(), loadBarChart(), loadCampaigns(), loadAgents()]);
+      } catch (e) {
+        console.error('dashboard refresh error', e);
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 15000);
+  </script>
 
 </body>
 </html>
