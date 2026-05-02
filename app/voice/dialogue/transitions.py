@@ -64,19 +64,20 @@ class DialogueManager:
 
         if intent.intent_type == IntentType.REPEAT:
             ctx.state = DialogueState.REPEATING
-            text = q.prompt if q else "Could you please repeat your answer?"
+            text = q.prompt if q else ("אנא חזור על תשובתך." if self._is_hebrew(ctx) else "Could you please repeat your answer?")
             return ctx, DialogueAction.REPEAT_QUESTION, text
 
         if intent.intent_type == IntentType.REPHRASE:
             ctx.state = DialogueState.REPHRASING
-            text = self._rephrase_text(q)
+            text = self._rephrase_text(q, ctx)
             return ctx, DialogueAction.SPEAK_REPHRASE, text
 
         if intent.intent_type in (IntentType.NOT_NOW, IntentType.SKIP):
-            return self._close(ctx, "Understood. Thank you for your time. Goodbye.")
+            msg = "מובן. תודה על זמנך. להתראות!" if self._is_hebrew(ctx) else "Understood. Thank you for your time. Goodbye."
+            return self._close(ctx, msg)
 
         if intent.intent_type == IntentType.HELP:
-            text = self._help_text(q)
+            text = self._help_text(q, ctx)
             return ctx, DialogueAction.SPEAK_QUESTION, text
 
         if intent.intent_type == IntentType.ANSWER:
@@ -95,7 +96,7 @@ class DialogueManager:
             return self._handle_answer(ctx, synthetic)
 
         # Unknown / low confidence — use a context-aware hint when possible
-        return self._fallback.handle(ctx, self._validation_hint(intent.raw_text or "", q))
+        return self._fallback.handle(ctx, self._validation_hint(intent.raw_text or "", q, ctx))
 
     def _handle_repeating(
         self, ctx: FSMContext, intent: Intent
@@ -126,12 +127,15 @@ class DialogueManager:
             ctx.retry_count += 1
             ctx.state = DialogueState.WAITING
             q = ctx.current_question
-            text = f"No problem. {q.prompt}" if q else "Let's try again."
+            if self._is_hebrew(ctx):
+                text = f"בסדר. {q.prompt}" if q else "בואו ננסה שוב."
+            else:
+                text = f"No problem. {q.prompt}" if q else "Let's try again."
             return ctx, DialogueAction.SPEAK_QUESTION, text
 
         # Unclear response during confirmation
         ctx.state = DialogueState.CONFIRMING
-        text = "Please say yes to confirm or no to try again."
+        text = "אמור כן לאישור או לא לניסיון חוזר." if self._is_hebrew(ctx) else "Please say yes to confirm or no to try again."
         return ctx, DialogueAction.CONFIRM_ANSWER, text
 
     def _handle_closing_done_error(
@@ -158,7 +162,7 @@ class DialogueManager:
             ctx.state = DialogueState.CONFIRMING
             q = ctx.current_question
             text = self._fallback.build_confirmation_prompt(
-                value, q.prompt if q else ""
+                value, q.prompt if q else "", ctx
             )
             return ctx, DialogueAction.CONFIRM_ANSWER, text
 
@@ -177,13 +181,13 @@ class DialogueManager:
         next_idx = self._evaluate_branch_rules(ctx)
 
         if next_idx == -1:  # "end" action
-            return self._close(ctx, self._closing_text())
+            return self._close(ctx, self._closing_text(ctx))
 
         ctx.advance_question(next_idx)
         next_q = ctx.current_question
 
         if next_q is None:
-            return self._close(ctx, self._closing_text())
+            return self._close(ctx, self._closing_text(ctx))
 
         ctx.state = DialogueState.ASKING
         return ctx, DialogueAction.SPEAK_QUESTION, next_q.prompt
@@ -237,11 +241,10 @@ class DialogueManager:
     # Helpers
     # -----------------------------------------------------------------------
 
-    def _validation_hint(self, raw_text: str, q) -> str | None:
-        """Return a specific error message based on the question type and invalid input."""
+    def _validation_hint(self, raw_text: str, q, ctx: FSMContext | None = None) -> str | None:
         if q is None:
             return None
-
+        hebrew = ctx and self._is_hebrew(ctx)
         if q.question_type == "rating":
             m = _ANY_NUMBER_RE.search(raw_text)
             if m:
@@ -249,22 +252,19 @@ class DialogueManager:
                 try:
                     num = float(num_str)
                     if num < 1 or num > 10:
-                        return (
-                            f"{num_str} is out of range. "
-                            "Please say a number between 1 and 10."
-                        )
+                        return (f"{num_str} מחוץ לטווח. אנא אמור מספר בין 1 ל-10." if hebrew
+                                else f"{num_str} is out of range. Please say a number between 1 and 10.")
                 except ValueError:
                     pass
             if raw_text.strip():
-                return "That's not a valid rating. Please say a number between 1 and 10."
+                return ("דירוג לא תקין. אנא אמור מספר בין 1 ל-10." if hebrew
+                        else "That's not a valid rating. Please say a number between 1 and 10.")
             return None
-
         if q.question_type == "mcq":
             if raw_text.strip():
-                # Repeat the question so the caller knows the options
-                return f"I didn't catch a valid option. {q.prompt}"
+                return (f"לא קלטתי אפשרות תקינה. {q.prompt}" if hebrew
+                        else f"I didn't catch a valid option. {q.prompt}")
             return None
-
         return None
 
     def _close(
@@ -274,42 +274,67 @@ class DialogueManager:
         ctx.log("session_end")
         return ctx, DialogueAction.SPEAK_CLOSING, text
 
+    def _is_hebrew(self, ctx: FSMContext) -> bool:
+        lang = getattr(ctx, "_language", "en") or "en"
+        return lang.startswith("he")
+
     def _greeting_text(self, ctx: FSMContext) -> str:
+        if self._is_hebrew(ctx):
+            return (
+                "שלום! תודה שהקדשת מזמנך להשתתף בסקר שלנו היום. "
+                "המשוב שלך חשוב לנו מאוד. "
+                "נתחיל."
+            )
         return (
             "Hello! Thank you for taking the time to participate in our survey today. "
             "Your feedback is very important to us. "
             "Let's get started."
         )
 
-    def _closing_text(self) -> str:
+    def _closing_text(self, ctx: FSMContext | None = None) -> str:
+        if ctx and self._is_hebrew(ctx):
+            return (
+                "זהו סיום הסקר. "
+                "תודה רבה על תשובותיך. יום נפלא לך. להתראות!"
+            )
         return (
             "That's the end of the survey. "
             "Thank you so much for your responses. Have a wonderful day. Goodbye!"
         )
 
-    def _rephrase_text(self, q) -> str:
+    def _rephrase_text(self, q, ctx: FSMContext | None = None) -> str:
+        hebrew = ctx and self._is_hebrew(ctx)
         if q is None:
-            return "Let me say that differently. Could you please repeat your answer?"
-        rephrases = {
-            "rating": (
-                f"Let me rephrase that. {q.prompt} "
-                "Please give me a number from 1 to 10, where 1 is very dissatisfied "
-                "and 10 is extremely satisfied."
-            ),
-            "mcq": (
-                f"Let me say that differently. {q.prompt} "
-                "Please choose one of the options I listed."
-            ),
-            "free_text": (
-                f"Let me put it another way. {q.prompt} "
-                "Please share your thoughts freely — there is no wrong answer."
-            ),
-        }
+            return "תנסח אחרת בבקשה." if hebrew else "Let me say that differently. Could you please repeat your answer?"
+        if hebrew:
+            rephrases = {
+                "rating": f"אנסח מחדש. {q.prompt} אנא ציין מספר בין 1 ל-10.",
+                "mcq": f"אסביר אחרת. {q.prompt} אנא בחר אחת מהאפשרויות.",
+                "free_text": f"אנסח אחרת. {q.prompt} ענה בחופשיות — אין תשובה שגויה.",
+            }
+        else:
+            rephrases = {
+                "rating": (f"Let me rephrase that. {q.prompt} "
+                           "Please give me a number from 1 to 10, where 1 is very dissatisfied "
+                           "and 10 is extremely satisfied."),
+                "mcq": (f"Let me say that differently. {q.prompt} "
+                        "Please choose one of the options I listed."),
+                "free_text": (f"Let me put it another way. {q.prompt} "
+                              "Please share your thoughts freely — there is no wrong answer."),
+            }
         return rephrases.get(q.question_type, q.prompt)
 
-    def _help_text(self, q) -> str:
+    def _help_text(self, q, ctx: FSMContext | None = None) -> str:
+        hebrew = ctx and self._is_hebrew(ctx)
         if q is None:
-            return "I'm here to help. Please answer the question when you're ready."
+            return "אני כאן לעזור. ענה על השאלה כשתהיה מוכן." if hebrew else "I'm here to help. Please answer the question when you're ready."
+        if hebrew:
+            tips = {
+                "rating": "פשוט אמור מספר בין 1 ל-10.",
+                "mcq": "אמור את האות של האפשרות שאתה מעדיף.",
+                "free_text": "אמור בחופשיות מה שעולה בדעתך.",
+            }
+            return f"אין בעיה! {tips.get(q.question_type, 'אנא ענה על השאלה.')} {q.prompt}"
         tips = {
             "rating": "Just say a number between 1 and 10.",
             "mcq": "Say the letter or number of the option you prefer.",
