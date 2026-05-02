@@ -25,40 +25,29 @@ class FallbackHandler:
         self,
         ctx: FSMContext,
         custom_text: str | None = None,
+        **_kwargs,
     ) -> tuple[FSMContext, DialogueAction, str]:
-        """Return (ctx, action, response_text) for the current fallback situation.
-
-        ctx.state is updated in-place before returning so the pipeline always
-        receives an FSMContext as the first element (not a DialogueState enum).
-        """
         if ctx.retry_count >= self.config.max_retries:
             ctx.log("escalate", retry_count=ctx.retry_count)
             ctx.state = DialogueState.CLOSING
-            return (
-                ctx,
-                DialogueAction.ESCALATE,
-                self._escalation_text(),
-            )
+            return (ctx, DialogueAction.ESCALATE, self._escalation_text(ctx))
 
         ctx.retry_count += 1
         ctx.log("fallback", retry_count=ctx.retry_count)
         ctx.state = DialogueState.FALLBACK
         q = ctx.current_question
-        text = custom_text or self._fallback_text(ctx.retry_count, q.question_type if q else None)
-        return (
-            ctx,
-            DialogueAction.SPEAK_FALLBACK,
-            text,
-        )
+        text = custom_text or self._fallback_text(ctx.retry_count, q.question_type if q else None, ctx)
+        return (ctx, DialogueAction.SPEAK_FALLBACK, text)
 
-    def build_confirmation_prompt(self, answer: str, question_prompt: str) -> str:
+    def build_confirmation_prompt(self, answer: str, question_prompt: str, ctx: FSMContext | None = None) -> str:
+        if ctx and self._is_hebrew(ctx):
+            return f"שמעתי: {answer}. האם זה נכון? אמור כן לאישור או לא לניסיון חוזר."
         return (
             f"I heard: {answer}. "
             f"Is that correct? Please say yes to confirm or no to try again."
         )
 
     def should_confirm(self, confidence: float) -> bool:
-        """True when the answer confidence is good enough to attempt a confirmation."""
         return (
             self.config.low_confidence_threshold
             <= confidence
@@ -66,18 +55,33 @@ class FallbackHandler:
         )
 
     def should_auto_accept(self, confidence: float) -> bool:
-        """True when we can accept the answer without confirmation."""
         return confidence >= self.config.skip_confirmation_above
 
     # -----------------------------------------------------------------------
 
-    def _fallback_text(self, attempt: int, question_type: str | None = None) -> str:
+    def _is_hebrew(self, ctx: FSMContext) -> bool:
+        lang = getattr(ctx, "_language", "en") or "en"
+        return lang.startswith("he")
+
+    def _fallback_text(self, attempt: int, question_type: str | None = None, ctx: FSMContext | None = None) -> str:
+        if ctx and self._is_hebrew(ctx):
+            hint = {
+                "rating":    "אנא אמור מספר בין 1 ל-10.",
+                "mcq":       "אנא אמור את האות של האפשרות שבחרת, למשל א, ב או ג.",
+                "free_text": "אנא אמור את תשובתך בחופשיות.",
+            }.get(question_type or "", "")
+            base = [
+                f"מצטער, זו אינה תשובה תקינה. {hint} אנא נסה שוב.",
+                f"התשובה לא נקלטה כראוי. {hint} אנא הקשב ועשה ניסיון נוסף.",
+                f"עדיין לא הצלחתי לקלוט תשובה תקינה. {hint} נסה פעם אחת נוספת.",
+            ]
+            return base[min(attempt - 1, len(base) - 1)]
+
         hint = {
             "rating":   "Please say a number between 1 and 10.",
             "mcq":      "Please say the letter of your chosen option, for example A, B, or C.",
             "free_text": "Please speak your answer freely.",
         }.get(question_type or "", "")
-
         base = [
             f"I'm sorry, that doesn't seem to be a valid answer. {hint} Could you please try again?",
             f"That answer isn't quite right. {hint} Please listen carefully and respond clearly.",
@@ -85,7 +89,13 @@ class FallbackHandler:
         ]
         return base[min(attempt - 1, len(base) - 1)]
 
-    def _escalation_text(self) -> str:
+    def _escalation_text(self, ctx: FSMContext | None = None) -> str:
+        if ctx and self._is_hebrew(ctx):
+            return (
+                "אני מתקשה להבין את תשובותיך. "
+                "אעביר אותך לנציג שיוכל לסייע. "
+                "תודה על סבלנותך."
+            )
         return (
             "I'm having difficulty understanding your responses. "
             "I'll connect you with a team member who can help. "
