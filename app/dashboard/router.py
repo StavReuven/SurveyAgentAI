@@ -220,6 +220,8 @@ def get_live_calls(
     for sid, s in _live_sessions.items():
         if campaign_id and s.get("campaign_id") != campaign_id:
             continue
+        if s.get("completed_at"):
+            continue
         ctx = s.get("ctx")
         if ctx is None:
             continue

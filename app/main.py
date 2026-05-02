@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -1083,6 +1083,8 @@ def live_calls_flat(campaign_id: int | None = None) -> dict:
     for sid, s in _voice_sessions.items():
         if campaign_id and s.get("campaign_id") != campaign_id:
             continue
+        if s.get("completed_at"):
+            continue
         ctx = s.get("ctx")
         if ctx is None:
             continue
@@ -1302,10 +1304,10 @@ def _mock_answer_for_question(question_type: str, config: dict, state: str, lang
     return random.choice(responses)
 
 
-async def _run_demo_session(session_id: str, campaign_id: int):
+async def _run_demo_session(session_id: str, campaign_id: int, interval: float = 7.0):
     """Auto-advance a session by sending simulated answers until complete."""
     await asyncio.sleep(2)  # brief pause before first auto-turn
-    for _ in range(40):     # safety cap
+    for _ in range(60):     # safety cap
         session = _voice_sessions.get(session_id)
         if not session:
             break
@@ -1340,14 +1342,17 @@ async def _run_demo_session(session_id: str, campaign_id: int):
         except Exception:
             break
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(interval)
 
 
 @app.post("/api/sessions/{session_id}/demo-run")
-async def start_demo_run(session_id: str):
+async def start_demo_run(
+    session_id: str,
+    interval: float = Query(default=7.0, ge=1.0, le=30.0),
+):
     """Start auto-advancing a session with simulated participant answers.
 
-    Each turn is sent every ~3 seconds so watch-mode observers can follow along.
+    interval: seconds between turns (default 7, range 1–30).
     """
     session = _voice_sessions.get(session_id)
     if not session:
@@ -1356,7 +1361,7 @@ async def start_demo_run(session_id: str):
     if session_id in _demo_run_tasks and not _demo_run_tasks[session_id].done():
         return {"status": "already_running", "session_id": session_id}
 
-    task = asyncio.create_task(_run_demo_session(session_id, session["campaign_id"]))
+    task = asyncio.create_task(_run_demo_session(session_id, session["campaign_id"], interval=interval))
     _demo_run_tasks[session_id] = task
     return {"status": "started", "session_id": session_id}
 
