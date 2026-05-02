@@ -71,11 +71,14 @@
     <!-- Campaigns Grid -->
     <div id="campaign-cards" class="grid-2"></div>
 
-    <!-- Builder Panel -->
-    <section id="builder-panel" class="hidden" style="margin-top: 40px; border-top: 2px solid var(--border); padding-top: 24px;">
+    <!-- Builder Panel (moved into #campaign-cards grid dynamically via JS) -->
+    <section id="builder-panel" class="hidden" style="grid-column: 1 / -1; border-top: 2px solid var(--primary); padding-top: 24px; margin-top: 4px;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <h2 id="builder-title" style="font-size: 20px;">עורך סקר</h2>
-        <span id="execution-status" class="status-badge" style="background:#f1f5f9; color:#475569;">סטטוס: לא ידוע</span>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <span id="execution-status" class="status-badge" style="background:#f1f5f9; color:#475569;">סטטוס: לא ידוע</span>
+          <button id="close-builder-btn" type="button" title="סגור עורך" style="background:white; border:1px solid var(--border); border-radius:8px; padding:4px 12px; cursor:pointer; font-size:18px; line-height:1; color:#64748b;">✕</button>
+        </div>
       </div>
 
       <div class="builder-grid">
@@ -169,5 +172,18 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <div id="close-confirm-modal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; display:flex; align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:12px; padding:28px 24px; max-width:360px; width:90%; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.25);">
+      <div style="font-size:28px; margin-bottom:8px;">⚠️</div>
+      <h3 style="font-size:17px; margin-bottom:8px;">שינויים לא נשמרו</h3>
+      <p style="font-size:14px; color:var(--text-muted); margin-bottom:24px;">יש שינויים שלא נשמרו. האם ברצונך לשמור לפני הסגירה?</p>
+      <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+        <button id="modal-save-btn" style="background:var(--primary); color:white; border:none; padding:9px 18px; border-radius:8px; cursor:pointer; font-family:inherit; font-size:14px; font-weight:500;">שמור וסגור</button>
+        <button id="modal-discard-btn" style="background:#fee2e2; color:#dc2626; border:1px solid #fca5a5; padding:9px 18px; border-radius:8px; cursor:pointer; font-family:inherit; font-size:14px;">סגור בלי לשמור</button>
+        <button id="modal-cancel-btn" style="background:white; border:1px solid var(--border); padding:9px 18px; border-radius:8px; cursor:pointer; font-family:inherit; font-size:14px;">ביטול</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

@@ -3,9 +3,11 @@ const state = {
   questions: [],
   execution: null,
   policy: null,
+  isDirty: false,
 };
 
 const toast = document.getElementById("toast");
+const closeConfirmModal = document.getElementById("close-confirm-modal");
 const campaignCards = document.getElementById("campaign-cards");
 const builderPanel = document.getElementById("builder-panel");
 const builderTitle = document.getElementById("builder-title");
@@ -27,6 +29,53 @@ function showToast(message) {
   toast.classList.remove("hidden");
   setTimeout(() => toast.classList.add("hidden"), 1800);
 }
+
+function resetDirty() { state.isDirty = false; }
+
+function closeBuilder() {
+  builderPanel.classList.add("hidden");
+  // Move builder back outside the grid so it doesn't take up space
+  if (builderPanel.parentElement === campaignCards) {
+    campaignCards.parentElement.appendChild(builderPanel);
+  }
+  state.selectedCampaignId = null;
+  resetDirty();
+}
+
+function showCloseModal() {
+  closeConfirmModal.classList.remove("hidden");
+}
+
+function hideCloseModal() {
+  closeConfirmModal.classList.add("hidden");
+}
+
+document.getElementById("close-builder-btn").addEventListener("click", () => {
+  if (state.isDirty) {
+    showCloseModal();
+  } else {
+    closeBuilder();
+  }
+});
+
+document.getElementById("modal-cancel-btn").addEventListener("click", hideCloseModal);
+
+document.getElementById("modal-discard-btn").addEventListener("click", () => {
+  hideCloseModal();
+  closeBuilder();
+});
+
+document.getElementById("modal-save-btn").addEventListener("click", async () => {
+  hideCloseModal();
+  // Submit the policy form to save its values, then close
+  policyForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  // Wait briefly for the async save to complete before closing
+  setTimeout(closeBuilder, 400);
+});
+
+// Track unsaved changes in builder panel via event delegation
+builderPanel.addEventListener("input", () => { state.isDirty = true; });
+builderPanel.addEventListener("change", () => { state.isDirty = true; });
 
 async function api(path, options = {}) {
   const res = await fetch(path, options);
@@ -157,6 +206,12 @@ async function loadAttempts(campaignId) {
 
 async function loadCampaignCards() {
   const campaigns = await api("/api/campaigns/summary");
+
+  // Rescue builder from grid before wiping innerHTML
+  if (builderPanel.parentElement === campaignCards) {
+    campaignCards.parentElement.appendChild(builderPanel);
+  }
+
   campaignCards.innerHTML = "";
   if (!campaigns.length) {
     campaignCards.innerHTML = "<p>אין סקרים פעילים. צור סקר חדש למעלה.</p>";
@@ -166,6 +221,7 @@ async function loadCampaignCards() {
   campaigns.forEach((c) => {
     const card = document.createElement("article");
     card.className = "card";
+    card.dataset.campaignId = c.id;
     card.style.display = "flex";
     card.style.flexDirection = "column";
 
@@ -194,7 +250,7 @@ async function loadCampaignCards() {
       </div>
 
       <div class="actions" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; justify-content: center;">
-        <button data-open="${c.id}" class="btn-primary" style="font-size: 12px; padding: 6px 12px;">ערוך מתווה</button>
+        <button data-open="${c.id}" class="btn-primary" style="font-size: 12px; padding: 6px 12px;">עריכת סקר</button>
         <button data-duplicate="${c.id}" style="background: white; border: 1px solid var(--border); color: #475569; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">שכפל</button>
         <button data-start="${c.id}" style="background: white; border: 1px solid #16a34a; color: #16a34a; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">הפעל</button>
         <button data-pause="${c.id}" style="background: white; border: 1px solid #d97706; color: #d97706; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">השהה</button>
@@ -214,13 +270,34 @@ async function loadCampaignCards() {
     `;
     campaignCards.appendChild(card);
   });
+
+  // Re-insert builder after the selected card if one is open
+  if (state.selectedCampaignId && !builderPanel.classList.contains("hidden")) {
+    const selectedCard = campaignCards.querySelector(`[data-campaign-id="${state.selectedCampaignId}"]`);
+    if (selectedCard) {
+      selectedCard.insertAdjacentElement("afterend", builderPanel);
+    } else {
+      builderPanel.classList.add("hidden");
+      state.selectedCampaignId = null;
+    }
+  }
 }
 
-async function openCampaign(id) {
+async function openCampaign(id, cardElement) {
   state.selectedCampaignId = id;
   const campaign = await api(`/api/campaigns/${id}`);
   builderTitle.textContent = `Campaign Builder: ${campaign.name}`;
+
+  // Insert builder directly after the clicked card inside the grid
+  const targetCard = cardElement || campaignCards.querySelector(`[data-campaign-id="${id}"]`);
+  if (targetCard) {
+    targetCard.insertAdjacentElement("afterend", builderPanel);
+  } else {
+    campaignCards.appendChild(builderPanel);
+  }
   builderPanel.classList.remove("hidden");
+  resetDirty();
+  builderPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 
   state.questions = await api(`/api/campaigns/${id}/questions`);
   renderQuestions();
@@ -286,7 +363,7 @@ campaignCards.addEventListener("click", async (e) => {
 
   try {
     if (btn.dataset.open) {
-      await openCampaign(Number(id));
+      await openCampaign(Number(id), btn.closest("article"));
       showToast("Campaign opened");
     } else if (btn.dataset.duplicate) {
       await api(`/api/campaigns/${id}/duplicate`, { method: "POST" });
@@ -363,6 +440,7 @@ policyForm.addEventListener("submit", async (e) => {
       body: JSON.stringify(payload),
     });
     renderPolicyForm();
+    resetDirty();
     showToast("Calling policy saved");
   } catch (err) {
     showToast(err.message);
