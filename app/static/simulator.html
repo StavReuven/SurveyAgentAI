@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Voice AI Pipeline ג€” Call Simulator</title>
+  <title>Voice AI Pipeline - Call Simulator</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -16,7 +16,7 @@
       flex-direction: column;
     }
 
-    /* ג”€ג”€ Header ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Header */
     header {
       background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
       border-bottom: 1px solid #334155;
@@ -30,10 +30,10 @@
     header a { margin-left: auto; color: #64748b; font-size: 13px; text-decoration: none; }
     header a:hover { color: #38bdf8; }
 
-    /* ג”€ג”€ Layout ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Layout */
     .app { display: flex; flex: 1; height: calc(100vh - 61px); overflow: hidden; }
 
-    /* ג”€ג”€ Left panel: setup ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Left panel */
     .setup-panel {
       width: 300px;
       min-width: 300px;
@@ -81,7 +81,7 @@
     .btn-danger:hover:not(:disabled) { background: #f87171; }
     .btn:disabled { opacity: .4; cursor: default; }
 
-    /* ג”€ג”€ State card ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* State card */
     .state-card {
       margin: 0 16px 8px;
       background: #0f172a;
@@ -106,14 +106,14 @@
     .badge-error     { background: #7f1d1d88; color: #f87171; }
     .badge-greeting  { background: #1e293b; color: #94a3b8; }
 
-    /* ג”€ג”€ Answers ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Answers */
     .answers-box { margin: 0 16px 16px; }
     .answers-box .a-title { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
     .answer-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
     .answer-row .a-key { color: #64748b; flex: 1; }
     .answer-row .a-val { color: #4ade80; font-weight: 600; }
 
-    /* ג”€ג”€ Centre: call screen ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Centre: call screen */
     .call-panel {
       flex: 1;
       display: flex;
@@ -144,7 +144,7 @@
     .call-info .ci-main { font-size: 14px; font-weight: 600; }
     .call-info .ci-sub  { font-size: 11px; color: #64748b; }
 
-    /* ג”€ג”€ Transcript ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Transcript */
     #transcript {
       flex: 1;
       overflow-y: auto;
@@ -197,7 +197,7 @@
     .empty-state svg { width: 56px; height: 56px; opacity: .4; }
     .empty-state p { font-size: 14px; }
 
-    /* ג”€ג”€ Input bar ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Input bar */
     .input-bar {
       border-top: 1px solid #334155;
       background: #1e293b;
@@ -245,7 +245,7 @@
     }
     .qr:hover { border-color: #38bdf8; color: #38bdf8; }
 
-    /* ג”€ג”€ Mic button ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
+    /* Mic button */
     #mic-btn {
       width: 44px; height: 44px;
       border-radius: 50%;
@@ -284,13 +284,13 @@
 
 <header>
   <div>
-    <div class="logo">נ™ Voice AI Pipeline</div>
-    <div class="subtitle">SAA-50 ֲ· Call Simulator</div>
+    <div class="logo">&#127897; Voice AI Pipeline</div>
+    <div class="subtitle">SAA-50 &middot; Call Simulator</div>
   </div>
-  <a href="/">ג† Campaign Builder</a>
+  <a href="/">&#8592; Campaign Builder</a>
   <a href="/dashboard">Dashboard</a>
-  <a href="/docs" target="_blank">API Docs ג†—</a>
-  <button id="voice-toggle" onclick="toggleVoice()" style="margin-left:8px;background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">נ” Voice ON</button>
+  <a href="/docs" target="_blank">API Docs &#8599;</a>
+  <button id="voice-toggle" onclick="toggleVoice()" style="margin-left:8px;background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">&#128266; Voice ON</button>
 </header>
 
 <div class="app">
@@ -301,7 +301,7 @@
     <div class="setup-body">
       <div>
         <label>Campaign</label>
-        <select id="campaign-select"><option value="">Loadingג€¦</option></select>
+        <select id="campaign-select"><option value="">Loading&hellip;</option></select>
       </div>
       <div>
         <label>Caller phone number</label>
@@ -311,14 +311,14 @@
         <label>Locale</label>
         <input type="text" id="locale-input" value="en-US" />
       </div>
-      <button class="btn btn-primary" id="start-btn">ג–¶ Start Call</button>
-      <button class="btn btn-danger"  id="end-btn" disabled>ג¬› End Call</button>
+      <button class="btn btn-primary" id="start-btn">&#9654; Start Call</button>
+      <button class="btn btn-danger"  id="end-btn" disabled>&#9632; End Call</button>
     </div>
 
     <div class="panel-title" style="margin-top:8px">Session State</div>
     <div class="state-card" id="state-card" style="display:none">
-      <div class="row"><span class="key">State</span><span class="val" id="s-state">ג€”</span></div>
-      <div class="row"><span class="key">Question</span><span class="val" id="s-question">ג€”</span></div>
+      <div class="row"><span class="key">State</span><span class="val" id="s-state">&mdash;</span></div>
+      <div class="row"><span class="key">Question</span><span class="val" id="s-question">&mdash;</span></div>
       <div class="row"><span class="key">Retries</span><span class="val" id="s-retries">0</span></div>
       <div class="row"><span class="key">Turns</span><span class="val" id="s-turns">0</span></div>
     </div>
@@ -350,18 +350,18 @@
     </div>
 
     <div class="quick-replies" id="quick-replies" style="display:none">
-      <span class="qr" onclick="setInput('Can you repeat that?')">נ” Repeat</span>
-      <span class="qr" onclick="setInput('Can you rephrase that?')">נ’¬ Rephrase</span>
-      <span class="qr" onclick="setInput('Not now, call me back later')">נ« Not Now</span>
-      <span class="qr" onclick="setInput('Yes')">ג… Yes</span>
-      <span class="qr" onclick="setInput('No')">ג No</span>
-      <span class="qr" onclick="setInput('Skip')">ג­ Skip</span>
+      <span class="qr" onclick="setInput('Can you repeat that?')">&#128257; Repeat</span>
+      <span class="qr" onclick="setInput('Can you rephrase that?')">&#128172; Rephrase</span>
+      <span class="qr" onclick="setInput('Not now, call me back later')">&#128336; Not Now</span>
+      <span class="qr" onclick="setInput('Yes')">&#10003; Yes</span>
+      <span class="qr" onclick="setInput('No')">&#10007; No</span>
+      <span class="qr" onclick="setInput('Skip')">&#9197; Skip</span>
     </div>
 
     <div class="input-bar">
-      <button id="mic-btn" disabled title="Hold to speak">נ₪</button>
-      <input id="caller-input" type="text" placeholder="Speak or type your replyג€¦" disabled />
-      <span class="listening-indicator" id="listen-label" style="display:none">Listeningג€¦</span>
+      <button id="mic-btn" disabled title="Click to speak">&#127908;</button>
+      <input id="caller-input" type="text" placeholder="Speak or type your reply&hellip;" disabled />
+      <span class="listening-indicator" id="listen-label" style="display:none">Listening&hellip;</span>
       <button id="send-btn" disabled>Send</button>
     </div>
   </div>
@@ -374,14 +374,13 @@ let sessionId = null;
 let campaignId = null;
 let turnCount = 0;
 
-// ג”€ג”€ Web Speech API (browser TTS) ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// Web Speech API (browser TTS)
 const synth = window.speechSynthesis;
 let voiceEnabled = true;
 let selectedVoice = null;
 
 function loadVoices() {
   const voices = synth.getVoices();
-  // prefer English voices
   selectedVoice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
                   voices.find(v => v.lang.startsWith('en')) ||
                   voices[0] || null;
@@ -399,12 +398,12 @@ function speak(text) {
   synth.speak(utt);
 }
 
-// ג”€ג”€ Boot ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// Boot
 async function loadCampaigns() {
   const res = await fetch(`${API}/api/campaigns`);
   const list = await res.json();
   const sel = document.getElementById('campaign-select');
-  sel.innerHTML = '<option value="">ג€” select ג€”</option>';
+  sel.innerHTML = '<option value="">&mdash; select &mdash;</option>';
   list.filter(c => c.status === 'active').forEach(c => {
     const o = document.createElement('option');
     o.value = c.id;
@@ -417,7 +416,7 @@ async function loadCampaigns() {
 }
 loadCampaigns();
 
-// ג”€ג”€ Helpers ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// Helpers
 function setInput(text) {
   const inp = document.getElementById('caller-input');
   inp.value = text;
@@ -425,7 +424,7 @@ function setInput(text) {
 }
 
 function fmt(ms) {
-  if (ms === null || ms === undefined) return 'ג€”';
+  if (ms === null || ms === undefined) return '&mdash;';
   return ms.toFixed(1) + ' ms';
 }
 
@@ -443,7 +442,7 @@ function addBubble(role, text, actionTag) {
 
   const label = document.createElement('div');
   label.className = 'bubble-label';
-  label.textContent = role === 'bot' ? 'נ₪– AI Bot' : 'נ§‘ Caller';
+  label.textContent = role === 'bot' ? 'AI Bot' : 'Caller';
   wrap.appendChild(label);
 
   const bubble = document.createElement('div');
@@ -460,7 +459,7 @@ function addBubble(role, text, actionTag) {
   t.scrollTop = t.scrollHeight;
 }
 
-// ג”€ג”€ Web Speech Recognition (mic input) ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// Web Speech Recognition (mic input)
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isListening = false;
@@ -475,7 +474,7 @@ if (SpeechRecognition) {
     document.getElementById('mic-btn').classList.add('listening');
     document.getElementById('listen-label').style.display = 'inline';
     document.getElementById('caller-input').value = '';
-    document.getElementById('caller-input').placeholder = 'Listeningג€¦';
+    document.getElementById('caller-input').placeholder = 'Listening…';
   };
 
   recognition.onresult = (e) => {
@@ -492,7 +491,7 @@ if (SpeechRecognition) {
     isListening = false;
     document.getElementById('mic-btn').classList.remove('listening');
     document.getElementById('listen-label').style.display = 'none';
-    document.getElementById('caller-input').placeholder = 'Speak or type your replyג€¦';
+    document.getElementById('caller-input').placeholder = 'Speak or type your reply…';
     const text = document.getElementById('caller-input').value.trim();
     if (text) sendTurn();
   };
@@ -501,7 +500,7 @@ if (SpeechRecognition) {
     isListening = false;
     document.getElementById('mic-btn').classList.remove('listening');
     document.getElementById('listen-label').style.display = 'none';
-    document.getElementById('caller-input').placeholder = 'Speak or type your replyג€¦';
+    document.getElementById('caller-input').placeholder = 'Speak or type your reply…';
   };
 }
 
@@ -517,8 +516,8 @@ document.getElementById('mic-btn').addEventListener('click', () => {
 
 function updateState(data) {
   document.getElementById('s-state').innerHTML    = stateBadge(data.current_state || 'unknown');
-  document.getElementById('s-question').textContent = data.current_question_key || 'ג€”';
-  document.getElementById('s-retries').textContent  = 'ג€”';
+  document.getElementById('s-question').textContent = data.current_question_key || '—';
+  document.getElementById('s-retries').textContent  = '—';
   document.getElementById('s-turns').textContent    = turnCount;
   document.getElementById('state-card').style.display = 'block';
 }
@@ -533,7 +532,7 @@ function updateAnswers(answers) {
   box.style.display = 'block';
 }
 
-// ג”€ג”€ Start call ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// Start call
 document.getElementById('start-btn').addEventListener('click', async () => {
   const cid = document.getElementById('campaign-select').value;
   if (!cid) { alert('Please select an active campaign.'); return; }
@@ -547,14 +546,13 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   document.getElementById('send-btn').disabled = false;
   document.getElementById('quick-replies').style.display = 'flex';
 
-  // clear transcript
   const t = document.getElementById('transcript');
   t.innerHTML = '';
   document.getElementById('answers-box').style.display = 'none';
 
   const dot = document.getElementById('status-dot');
   dot.className = 'call-status-dot active';
-  document.getElementById('ci-main').textContent = `Call in progress ג€” Campaign #${cid}`;
+  document.getElementById('ci-main').textContent = `Call in progress — Campaign #${cid}`;
   document.getElementById('ci-sub').textContent  = document.getElementById('phone-input').value;
 
   try {
@@ -581,7 +579,7 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   }
 });
 
-// ג”€ג”€ Send turn ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// Send turn
 async function sendTurn() {
   const inp = document.getElementById('caller-input');
   const text = inp.value.trim();
@@ -607,12 +605,11 @@ async function sendTurn() {
     speak(data.response_text);
     updateState(data);
 
-    // fetch full state for answers + retries
     const stRes = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
     if (stRes.ok) {
       const st = await stRes.json();
       updateAnswers(st.answers);
-      document.getElementById('s-retries').textContent = st.retry_count ?? 'ג€”';
+      document.getElementById('s-retries').textContent = st.retry_count ?? '—';
     }
 
     if (data.session_complete) {
@@ -633,7 +630,7 @@ document.getElementById('caller-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendTurn();
 });
 
-// ג”€ג”€ End call ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// End call
 document.getElementById('end-btn').addEventListener('click', () => endCall(false));
 
 async function endCall(completed) {
@@ -644,8 +641,8 @@ async function endCall(completed) {
   }
   const dot = document.getElementById('status-dot');
   dot.className = 'call-status-dot done';
-  document.getElementById('ci-main').textContent = completed ? 'ג… Call completed' : 'ג¬› Call ended';
-  document.getElementById('ci-sub').textContent  = `${turnCount} turn(s) ֲ· session ${(sessionId||'').slice(0,8)}ג€¦`;
+  document.getElementById('ci-main').textContent = completed ? '✔ Call completed' : '■ Call ended';
+  document.getElementById('ci-sub').textContent  = `${turnCount} turn(s) · session ${(sessionId||'').slice(0,8)}…`;
   resetUI();
   sessionId = null;
 }
@@ -663,11 +660,10 @@ function resetUI() {
 function toggleVoice() {
   voiceEnabled = !voiceEnabled;
   const btn = document.getElementById('voice-toggle');
-  btn.textContent = voiceEnabled ? 'נ” Voice ON' : 'נ”‡ Voice OFF';
+  btn.textContent = voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
   btn.style.color = voiceEnabled ? '#4ade80' : '#64748b';
   if (!voiceEnabled) synth.cancel();
 }
 </script>
 </body>
 </html>
-

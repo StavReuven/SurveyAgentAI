@@ -1038,3 +1038,245 @@ def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(g
 @app.get("/dashboard")
 def dashboard():
     return FileResponse("app/static/dashboard.html")
+
+
+# ===========================================================================
+# Flat session endpoints (architecture doc test-code compatible)
+# ===========================================================================
+
+# In-memory operator escalation queue ordered by insertion time.
+# Each entry: {session_id, campaign_id, reason, rapport_score, transcript,
+#              current_question_key, queued_at, participant_phone}
+_operator_queue: list[dict] = []
+
+
+class SessionEventRequest(BaseModel):
+    type: str           # e.g. "INTENT"
+    intent: str | None = None
+    data: dict | None = None
+
+
+class HandoverRequest(BaseModel):
+    reason: str         # e.g. "LOW_CONFIDENCE", "OPERATOR_REQUEST"
+
+
+_INTENT_TO_ACTION: dict[str, str] = {
+    "REPEAT_QUESTION": "REPEAT",
+    "REPHRASE_QUESTION": "REPHRASE",
+    "NOT_NOW": "SCHEDULE_CALLBACK",
+    "OPT_OUT": "END_CALL",
+    "SKIP": "SKIP",
+    "HELP": "REPHRASE",
+    "CONFIRM_YES": "ACCEPT_ANSWER",
+    "CONFIRM_NO": "REPEAT",
+}
+
+
+@app.get("/api/live-calls")
+def live_calls_flat(campaign_id: int | None = None) -> dict:
+    """Architecture-doc compatible live-calls endpoint.
+
+    Returns {"calls": [...], "count": N} where each call includes
+    current_question_index and total_questions as required by User Story 6.
+    """
+    calls = []
+    for sid, s in _voice_sessions.items():
+        if campaign_id and s.get("campaign_id") != campaign_id:
+            continue
+        ctx = s.get("ctx")
+        if ctx is None:
+            continue
+
+        total_q = len(ctx.questions)
+        answered = len(ctx.answers)
+        confidences = [
+            e["confidence"] for e in ctx.history
+            if e.get("event") == "turn" and "confidence" in e and e["confidence"] > 0
+        ]
+        rapport = round(sum(confidences) / len(confidences), 2) if confidences else None
+
+        calls.append({
+            "session_id": sid,
+            "campaign_id": s.get("campaign_id"),
+            "participant_phone": ctx.participant_phone,
+            "current_state": str(ctx.state),
+            "current_question_index": ctx.current_question_index,
+            "current_question_key": (ctx.current_question.question_key if ctx.current_question else None),
+            "total_questions": total_q,
+            "questions_answered": answered,
+            "progress_pct": round(answered / total_q * 100) if total_q else 0,
+            "rapport_score": rapport,
+            "started_at": s.get("started_at"),
+        })
+
+    return {"calls": calls, "count": len(calls)}
+
+
+@app.post("/api/sessions/{session_id}/event")
+async def session_event(
+    session_id: str,
+    payload: SessionEventRequest,
+    db: Session = Depends(get_db),
+):
+    """Process a session intent event (User Story 7: repeat/rephrase/opt-out etc.).
+
+    Dispatches the intent through the voice pipeline and returns next_action.
+    """
+    session = _voice_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+
+    ctx = session["ctx"]
+
+    if payload.type != "INTENT" or not payload.intent:
+        raise HTTPException(status_code=400, detail="type must be 'INTENT' and intent must be set")
+
+    intent_upper = payload.intent.upper()
+    next_action = _INTENT_TO_ACTION.get(intent_upper)
+
+    if not next_action:
+        raise HTTPException(status_code=400, detail=f"Unknown intent: {payload.intent}")
+
+    # For REPEAT / REPHRASE intents, drive the pipeline with a matching utterance
+    # so the FSM state is updated correctly.
+    intent_utterances: dict[str, str] = {
+        "REPEAT_QUESTION": "please repeat that",
+        "REPHRASE_QUESTION": "can you rephrase",
+        "NOT_NOW": "not now",
+        "OPT_OUT": "opt out",
+        "SKIP": "skip",
+        "HELP": "i need help",
+        "CONFIRM_YES": "yes",
+        "CONFIRM_NO": "no",
+    }
+    utterance = intent_utterances.get(intent_upper, payload.intent.lower())
+
+    from .voice.stt.adapter import MockSTTAdapter
+    _pipeline._stt = MockSTTAdapter(responses=[utterance], confidence=0.95)
+
+    async def _chunks():
+        yield utterance.encode()
+
+    result = await _pipeline.process_turn(ctx, _chunks())
+    session["stt_metrics"].append(result.stt_metrics)
+    session["tts_metrics"].append(result.tts_metrics)
+
+    if result.session_complete:
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+        session["answers"] = dict(ctx.answers)
+
+    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+    if call_log:
+        call_log.turns_count = len(ctx.history)
+        if result.session_complete:
+            call_log.ended_at = datetime.now(timezone.utc)
+            call_log.status = "completed"
+        db.commit()
+
+    return {
+        "session_id": session_id,
+        "intent": payload.intent,
+        "next_action": next_action,
+        "response_text": result.response_text,
+        "current_state": result.current_state,
+        "session_complete": result.session_complete,
+    }
+
+
+@app.post("/api/sessions/{session_id}/handover")
+def session_handover(session_id: str, payload: HandoverRequest, db: Session = Depends(get_db)):
+    """Escalate a voice session to the human operator queue (User Story 10).
+
+    Returns {"status": "QUEUED_FOR_OPERATOR"} and pushes full context into
+    the priority queue sorted by rapport_score ascending (lowest confidence first).
+    """
+    session = _voice_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+
+    ctx = session["ctx"]
+
+    confidences = [
+        e["confidence"] for e in ctx.history
+        if e.get("event") == "turn" and "confidence" in e and e["confidence"] > 0
+    ]
+    rapport = round(sum(confidences) / len(confidences), 2) if confidences else 0.0
+
+    transcript = [
+        {"role": "agent" if e.get("event") == "speak" else "caller", "text": e.get("text", "")}
+        for e in ctx.history
+        if e.get("text")
+    ]
+
+    entry = {
+        "session_id": session_id,
+        "campaign_id": session.get("campaign_id"),
+        "participant_phone": ctx.participant_phone,
+        "reason": payload.reason,
+        "rapport_score": rapport,
+        "current_question_key": (ctx.current_question.question_key if ctx.current_question else None),
+        "current_question_index": ctx.current_question_index,
+        "total_questions": len(ctx.questions),
+        "transcript": transcript,
+        "answers_so_far": dict(ctx.answers),
+        "queued_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Insert sorted by rapport_score ascending (lowest confidence = highest priority)
+    inserted = False
+    for i, item in enumerate(_operator_queue):
+        if rapport <= item["rapport_score"]:
+            _operator_queue.insert(i, entry)
+            inserted = True
+            break
+    if not inserted:
+        _operator_queue.append(entry)
+
+    # Update call log
+    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+    if call_log:
+        call_log.status = "escalated"
+        call_log.ended_at = datetime.now(timezone.utc)
+        call_log.rapport_score = rapport if rapport else call_log.rapport_score
+        db.commit()
+
+    # Mark session as escalated so live-calls board reflects it
+    session["escalated"] = True
+    session["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+    queue_position = next(
+        (i + 1 for i, item in enumerate(_operator_queue) if item["session_id"] == session_id),
+        len(_operator_queue),
+    )
+
+    return {
+        "status": "QUEUED_FOR_OPERATOR",
+        "session_id": session_id,
+        "queue_position": queue_position,
+        "rapport_score": rapport,
+        "reason": payload.reason,
+    }
+
+
+@app.get("/api/operator-queue")
+def get_operator_queue() -> dict:
+    """Return the current Human-in-the-Loop escalation queue.
+
+    Ordered by priority (lowest rapport_score first so operators handle
+    the most uncertain calls first). Includes full transcript + context.
+    """
+    return {
+        "queue": _operator_queue,
+        "count": len(_operator_queue),
+    }
+
+
+@app.delete("/api/operator-queue/{session_id}")
+def resolve_operator_queue_item(session_id: str) -> dict:
+    """Remove a session from the operator queue once handled."""
+    global _operator_queue
+    before = len(_operator_queue)
+    _operator_queue = [item for item in _operator_queue if item["session_id"] != session_id]
+    if len(_operator_queue) == before:
+        raise HTTPException(status_code=404, detail="Session not found in operator queue")
+    return {"resolved": True, "session_id": session_id}
