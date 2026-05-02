@@ -1274,22 +1274,31 @@ def get_operator_queue() -> dict:
 _demo_run_tasks: dict[str, asyncio.Task] = {}
 
 
-def _mock_answer_for_question(question_type: str, config: dict, state: str) -> str:
+def _mock_answer_for_question(question_type: str, config: dict, state: str, language: str = "en") -> str:
     """Generate a realistic mock answer based on question type and current FSM state."""
     import random
-    # When bot is asking to confirm an answer, always reply "yes"
+    hebrew = language.startswith("he")
     if "confirming" in state.lower():
-        return "yes"
+        return "כן" if hebrew else "yes"
     if question_type == "rating":
         return str(random.randint(7, 10))
     if question_type == "mcq":
         choices = config.get("choices", [])
-        return random.choice(["A", "B", "C", "D"][:max(len(choices), 1)])
-    # free_text
-    responses = [
-        "yes", "the service is great", "everything was fine",
-        "I am satisfied", "no complaints", "it was very helpful"
-    ]
+        n = max(len(choices), 1)
+        if hebrew:
+            return random.choice(["א", "ב", "ג", "ד"][:n])
+        return random.choice(["A", "B", "C", "D"][:n])
+    if hebrew:
+        responses = [
+            "כן, בהחלט", "השירות היה מצוין", "הכל היה בסדר גמור",
+            "אני מרוצה מאוד", "אין לי תלונות", "זה היה מועיל מאוד",
+            "חוויה נפלאה", "אמליץ בחום"
+        ]
+    else:
+        responses = [
+            "yes", "the service is great", "everything was fine",
+            "I am satisfied", "no complaints", "it was very helpful"
+        ]
     return random.choice(responses)
 
 
@@ -1311,6 +1320,7 @@ async def _run_demo_session(session_id: str, campaign_id: int):
             q.question_type if q else "free_text",
             q.config if q else {},
             str(ctx.state),
+            language=getattr(ctx, "_language", "en") or "en",
         )
 
         from .voice.stt.adapter import MockSTTAdapter

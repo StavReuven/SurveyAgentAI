@@ -385,12 +385,26 @@ let _watchPoller = null;
 const synth = window.speechSynthesis;
 let voiceEnabled = true;
 let selectedVoice = null;
+let _ttsLang = 'en';
 
 function loadVoices() {
+  selectVoiceForLang(_ttsLang);
+}
+
+function selectVoiceForLang(lang) {
+  _ttsLang = lang;
   const voices = synth.getVoices();
-  selectedVoice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
-                  voices.find(v => v.lang.startsWith('en')) ||
-                  voices[0] || null;
+  const isHebrew = lang.startsWith('he');
+  if (isHebrew) {
+    selectedVoice = voices.find(v => v.lang.startsWith('he') && v.localService) ||
+                    voices.find(v => v.lang.startsWith('he')) ||
+                    voices.find(v => v.lang.startsWith('en')) ||
+                    voices[0] || null;
+  } else {
+    selectedVoice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
+                    voices.find(v => v.lang.startsWith('en')) ||
+                    voices[0] || null;
+  }
 }
 loadVoices();
 if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = loadVoices;
@@ -400,6 +414,7 @@ function speak(text) {
   synth.cancel();
   const utt = new SpeechSynthesisUtterance(text);
   utt.voice = selectedVoice;
+  utt.lang  = _ttsLang.startsWith('he') ? 'he-IL' : 'en-US';
   utt.rate  = 0.95;
   utt.pitch = 1.0;
   synth.speak(utt);
@@ -423,6 +438,15 @@ async function enterWatchMode(wSessionId, wCampaignId) {
   // hide left-panel elements that are irrelevant in watch mode
   document.querySelector('.setup-body').style.display = 'none';
   document.querySelector('.panel-title').textContent = 'Live Session';
+
+  // detect campaign language and set TTS voice accordingly
+  try {
+    const cr = await fetch(`${API}/api/campaigns/${wCampaignId}`);
+    if (cr.ok) {
+      const camp = await cr.json();
+      selectVoiceForLang(camp.language || 'en');
+    }
+  } catch(_) {}
 
   // kick off auto-advance on server
   await fetch(`${API}/api/sessions/${wSessionId}/demo-run`, { method: 'POST' });
