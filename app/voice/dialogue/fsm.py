@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from app.models import BranchRule as BranchRuleModel
 
+from app.voice.mirroring.calibration import SessionCalibration
+
 
 class DialogueState(str, Enum):
     """All states the dialogue FSM can be in."""
@@ -71,6 +73,9 @@ class FSMContext:
     # Populated by the pipeline from the DB
     questions: list[QuestionContext] = field(default_factory=list)
     branch_rules: list[Any] = field(default_factory=list)  # list[BranchRuleModel]
+
+    # SAA-72: per-session vocal calibration for voice mirroring
+    mirroring_calibration: SessionCalibration = field(default_factory=SessionCalibration)
 
     @property
     def current_question(self) -> QuestionContext | None:
