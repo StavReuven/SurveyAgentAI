@@ -278,6 +278,46 @@
     ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
+    /* RIGHT: Mirroring telemetry panel */
+    .mirror-panel {
+      width: 280px;
+      min-width: 280px;
+      background: #0f172a;
+      border-left: 1px solid #334155;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .mirror-panel .panel-title { padding: 16px; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #334155; }
+    .m-section { padding: 14px 16px; border-bottom: 1px solid #1e293b; }
+    .m-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #475569; margin-bottom: 10px; }
+    .m-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; font-size: 12px; }
+    .m-key { color: #64748b; }
+    .m-val { font-weight: 700; font-size: 13px; }
+    .m-val.green  { color: #4ade80; }
+    .m-val.yellow { color: #fbbf24; }
+    .m-val.red    { color: #f87171; }
+    .m-val.blue   { color: #38bdf8; }
+    .m-val.muted  { color: #475569; }
+    .m-bar-wrap { background: #1e293b; border-radius: 4px; height: 6px; width: 100%; margin-top: 4px; overflow: hidden; }
+    .m-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease, background 0.4s ease; }
+    .status-chip {
+      display: inline-block; padding: 3px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+    }
+    .chip-applied     { background: #14532d44; color: #4ade80; border: 1px solid #166534; }
+    .chip-calibrating { background: #1e40af33; color: #93c5fd; border: 1px solid #1d4ed8; }
+    .chip-killswitch  { background: #7f1d1d44; color: #f87171; border: 1px solid #991b1b; }
+    .chip-disabled    { background: #1e293b;   color: #475569; border: 1px solid #334155; }
+    .m-history { padding: 12px 16px; flex: 1; overflow-y: auto; }
+    .m-history .h-title { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #475569; margin-bottom: 10px; }
+    .h-entry { margin-bottom: 8px; padding: 7px 10px; background: #1e293b; border-radius: 6px; font-size: 11px; line-height: 1.5; border-left: 2px solid #334155; }
+    .h-entry.applied   { border-left-color: #4ade80; }
+    .h-entry.kill      { border-left-color: #f87171; }
+    .h-entry.calibrate { border-left-color: #38bdf8; }
+    .h-entry .h-turn   { color: #64748b; font-size: 10px; margin-bottom: 2px; }
+    .h-entry .h-reason { color: #94a3b8; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -354,6 +394,7 @@
       <span class="qr" onclick="setInput('Can you rephrase that?')">&#128172; Rephrase</span>
       <span class="qr" onclick="setInput('Not now, call me back later')">&#128336; Not Now</span>
       <span class="qr" onclick="setInput('Yes')">&#10003; Yes</span>
+      <span class="qr" id="ai-demo-btn" onclick="startAIDemo()" style="background:#0c4a6e;border-color:#0369a1;color:#38bdf8;">&#129302; AI Demo</span>
       <span class="qr" onclick="setInput('No')">&#10007; No</span>
       <span class="qr" onclick="setInput('Skip')">&#9197; Skip</span>
     </div>
@@ -363,6 +404,77 @@
       <input id="caller-input" type="text" placeholder="Speak or type your reply&hellip;" disabled />
       <span class="listening-indicator" id="listen-label" style="display:none">Listening&hellip;</span>
       <button id="send-btn" disabled>Send</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Psycho-Adaptive Mirroring telemetry -->
+  <div class="mirror-panel">
+    <div class="panel-title">🧠 Psycho-Adaptive Mirroring</div>
+
+    <div class="m-section">
+      <div class="m-section-title">Status</div>
+      <div class="m-row">
+        <span class="m-key">Decision</span>
+        <span id="m-status-chip"><span class="status-chip chip-disabled">waiting</span></span>
+      </div>
+      <div class="m-row">
+        <span class="m-key">Rapport</span>
+        <span class="m-val" id="m-rapport">—</span>
+      </div>
+      <div class="m-bar-wrap"><div class="m-bar-fill" id="m-rapport-bar" style="width:0%;background:#475569;"></div></div>
+    </div>
+
+    <div class="m-section">
+      <div class="m-section-title">TTS Adjustments (this turn)</div>
+      <div class="m-row">
+        <span class="m-key">Speaking Rate</span>
+        <span class="m-val" id="m-rate">1.000×</span>
+      </div>
+      <div class="m-bar-wrap">
+        <div class="m-bar-fill" id="m-rate-bar" style="width:50%;background:#38bdf8;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#334155;margin-top:2px;"><span>0.80×</span><span>1.00×</span><span>1.20×</span></div>
+
+      <div class="m-row" style="margin-top:10px;">
+        <span class="m-key">Pitch</span>
+        <span class="m-val" id="m-pitch">0.00 st</span>
+      </div>
+      <div class="m-bar-wrap">
+        <div class="m-bar-fill" id="m-pitch-bar" style="width:50%;background:#a78bfa;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#334155;margin-top:2px;"><span>−2st</span><span>0</span><span>+2st</span></div>
+    </div>
+
+    <div class="m-section">
+      <div class="m-section-title">Calibration</div>
+      <div class="m-row">
+        <span class="m-key">Turns observed</span>
+        <span class="m-val blue" id="m-turns-obs">0</span>
+      </div>
+      <div class="m-row">
+        <span class="m-key">Baseline locked</span>
+        <span class="m-val" id="m-calibrated">—</span>
+      </div>
+      <div class="m-row">
+        <span class="m-key">Smoothed WPM</span>
+        <span class="m-val" id="m-wpm">—</span>
+      </div>
+      <div class="m-row">
+        <span class="m-key">Baseline WPM</span>
+        <span class="m-val" id="m-baseline-wpm">—</span>
+      </div>
+    </div>
+
+    <div class="m-section">
+      <div class="m-section-title">Monitoring Flags</div>
+      <div class="m-row"><span class="m-key">Mirroring enabled</span><span class="m-val" id="mf-enabled">—</span></div>
+      <div class="m-row"><span class="m-key">Rapport OK</span><span class="m-val" id="mf-rapport-ok">—</span></div>
+      <div class="m-row"><span class="m-key">Kill-switch threshold</span><span class="m-val muted" id="mf-threshold">—</span></div>
+    </div>
+
+    <div class="m-history">
+      <div class="h-title">Decision Log</div>
+      <div id="m-history-list"><div style="color:#334155;font-size:12px;">No turns yet…</div></div>
     </div>
   </div>
 
@@ -448,8 +560,8 @@ async function enterWatchMode(wSessionId, wCampaignId) {
     }
   } catch(_) {}
 
-  // kick off auto-advance on server
-  await fetch(`${API}/api/sessions/${wSessionId}/demo-run`, { method: 'POST' });
+  // kick off auto-advance on server (2-second interval between turns)
+  await fetch(`${API}/api/sessions/${wSessionId}/demo-run?interval=2`, { method: 'POST' });
 
   // load current state immediately then poll
   await refreshWatchSession();
@@ -504,6 +616,9 @@ async function refreshWatchSession() {
     updateState(st);
     updateAnswers(st.answers);
     document.getElementById('s-retries').textContent = st.retry_count ?? '—';
+
+    // Update mirroring panel from session state (includes last_mirroring spread in)
+    if (st.mirroring) updateMirroringPanel(st.mirroring, turnCount);
 
     if (st.completed_at || (st.current_state && st.current_state.includes('DONE'))) {
       clearInterval(_watchPoller);
@@ -724,6 +839,7 @@ async function sendTurn() {
     addBubble('bot', data.response_text, data.dialogue_action.replace(/_/g,' '));
     speak(data.response_text);
     updateState(data);
+    if (data.mirroring) updateMirroringPanel(data.mirroring, turnCount);
 
     const stRes = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
     if (stRes.ok) {
@@ -749,6 +865,54 @@ document.getElementById('send-btn').addEventListener('click', sendTurn);
 document.getElementById('caller-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendTurn();
 });
+
+// AI Demo mode — let the server auto-play the session while we watch
+let _demoPoller = null;
+async function startAIDemo() {
+  if (!sessionId) return;
+  const btn = document.getElementById('ai-demo-btn');
+  if (btn) { btn.textContent = '⏳ Running…'; btn.style.pointerEvents = 'none'; }
+
+  try {
+    await fetch(`${API}/api/sessions/${sessionId}/demo-run?interval=2`, { method: 'POST' });
+  } catch(_) {}
+
+  // Poll session state and update mirroring panel every 2 s
+  if (_demoPoller) clearInterval(_demoPoller);
+  _demoPoller = setInterval(async () => {
+    if (!sessionId) { clearInterval(_demoPoller); return; }
+    try {
+      const r = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}`);
+      if (!r.ok) { clearInterval(_demoPoller); return; }
+      const st = await r.json();
+
+      const t = document.getElementById('transcript');
+      const prevCount = t.querySelectorAll('.bubble-wrap').length;
+      const history = st.history || [];
+      let rendered = 0;
+      history.forEach(entry => {
+        if (entry.event === 'bot_response' && entry.text) {
+          if (rendered >= prevCount) { addBubble('bot', entry.text, (entry.action||'').replace(/_/g,' ')); speak(entry.text); }
+          rendered++;
+        } else if (entry.event === 'caller_input' && entry.text) {
+          if (rendered >= prevCount) addBubble('caller', entry.text);
+          rendered++;
+        }
+      });
+
+      turnCount = history.length;
+      updateState(st);
+      updateAnswers(st.answers);
+      if (st.mirroring) updateMirroringPanel(st.mirroring, turnCount);
+
+      if (st.completed_at || !st.demo_running) {
+        clearInterval(_demoPoller);
+        if (btn) { btn.textContent = '✔ Done'; }
+        if (st.completed_at) endCall(true);
+      }
+    } catch(_) {}
+  }, 2000);
+}
 
 // End call
 document.getElementById('end-btn').addEventListener('click', () => endCall(false));
@@ -783,6 +947,105 @@ function toggleVoice() {
   btn.textContent = voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
   btn.style.color = voiceEnabled ? '#4ade80' : '#64748b';
   if (!voiceEnabled) synth.cancel();
+}
+
+// ── Mirroring telemetry panel ──────────────────────────────────────────────
+function updateMirroringPanel(m, turn) {
+  if (!m) return;
+
+  // Status chip
+  let chipClass, chipLabel;
+  if (!m.applied) {
+    if (m.reason && m.reason.includes('kill_switch'))  { chipClass = 'chip-killswitch';  chipLabel = '⛔ Kill Switch'; }
+    else if (m.reason && m.reason.includes('calibrat')) { chipClass = 'chip-calibrating'; chipLabel = '📡 Calibrating'; }
+    else if (m.reason === 'disabled')                   { chipClass = 'chip-disabled';    chipLabel = '○ Disabled'; }
+    else                                                 { chipClass = 'chip-disabled';    chipLabel = m.reason || '—'; }
+  } else {
+    chipClass = 'chip-applied'; chipLabel = '✨ Mirroring Active';
+  }
+  document.getElementById('m-status-chip').innerHTML = `<span class="status-chip ${chipClass}">${chipLabel}</span>`;
+
+  // Rapport bar
+  const flags = m.monitoring_flags || {};
+  const rapport = flags.rapport_above_threshold !== undefined
+    ? (flags.rapport_above_threshold ? '≥' : '<') + ' threshold'
+    : '—';
+
+  // Get rapport from calibration
+  const cal = m.calibration || {};
+  const smoothed = cal.smoothed || {};
+  const baseline = cal.baseline || {};
+
+  // Extract rapport from reason string  e.g. rapport=0.82
+  const rapportMatch = (m.reason || '').match(/rapport=([\d.]+)/);
+  const rapportVal = rapportMatch ? parseFloat(rapportMatch[1]) : null;
+  const rapportPct = rapportVal !== null ? Math.round(rapportVal * 100) : null;
+
+  const rEl = document.getElementById('m-rapport');
+  const rBar = document.getElementById('m-rapport-bar');
+  if (rapportPct !== null) {
+    rEl.textContent = rapportPct + '%';
+    rEl.className = 'm-val ' + (rapportPct >= 75 ? 'green' : rapportPct >= 50 ? 'yellow' : 'red');
+    const barColor = rapportPct >= 75 ? '#4ade80' : rapportPct >= 50 ? '#fbbf24' : '#f87171';
+    rBar.style.width = rapportPct + '%';
+    rBar.style.background = barColor;
+  } else {
+    rEl.textContent = '—'; rEl.className = 'm-val muted';
+    rBar.style.width = '0%';
+  }
+
+  // Rate bar: maps [0.80, 1.20] → [0%, 100%]
+  const rate = m.speaking_rate ?? 1.0;
+  const ratePct = Math.round(((rate - 0.80) / 0.40) * 100);
+  const rateColor = Math.abs(rate - 1.0) < 0.01 ? '#475569' : '#38bdf8';
+  document.getElementById('m-rate').textContent = rate.toFixed(3) + '×';
+  document.getElementById('m-rate').className = 'm-val ' + (m.applied ? 'blue' : 'muted');
+  document.getElementById('m-rate-bar').style.width = Math.max(0, Math.min(100, ratePct)) + '%';
+  document.getElementById('m-rate-bar').style.background = rateColor;
+
+  // Pitch bar: maps [−2, +2] → [0%, 100%]
+  const pitch = m.pitch ?? 0.0;
+  const pitchPct = Math.round(((pitch + 2.0) / 4.0) * 100);
+  const pitchColor = Math.abs(pitch) < 0.05 ? '#475569' : '#a78bfa';
+  document.getElementById('m-pitch').textContent = (pitch >= 0 ? '+' : '') + pitch.toFixed(2) + ' st';
+  document.getElementById('m-pitch').className = 'm-val ' + (m.applied ? 'blue' : 'muted');
+  document.getElementById('m-pitch-bar').style.width = Math.max(0, Math.min(100, pitchPct)) + '%';
+  document.getElementById('m-pitch-bar').style.background = pitchColor;
+
+  // Calibration
+  document.getElementById('m-turns-obs').textContent = cal.turns_observed ?? '—';
+  const isCalibrated = cal.is_calibrated;
+  const calEl = document.getElementById('m-calibrated');
+  calEl.textContent = isCalibrated ? '✓ Yes' : '✗ No';
+  calEl.className = 'm-val ' + (isCalibrated ? 'green' : 'yellow');
+
+  const smoothedWpm = smoothed.speaking_rate_wpm;
+  document.getElementById('m-wpm').textContent = smoothedWpm != null ? smoothedWpm.toFixed(1) + ' wpm' : '—';
+  const baselineWpm = baseline.speaking_rate_wpm;
+  document.getElementById('m-baseline-wpm').textContent = baselineWpm != null ? baselineWpm.toFixed(1) + ' wpm' : '—';
+
+  // Monitoring flags
+  const mfEnabled = document.getElementById('mf-enabled');
+  mfEnabled.textContent = flags.mirroring_enabled ? '✓ On' : '✗ Off';
+  mfEnabled.className = 'm-val ' + (flags.mirroring_enabled ? 'green' : 'red');
+
+  const mfRapport = document.getElementById('mf-rapport-ok');
+  mfRapport.textContent = flags.rapport_above_threshold ? '✓ Good' : '⚠ Low';
+  mfRapport.className = 'm-val ' + (flags.rapport_above_threshold ? 'green' : 'red');
+
+  document.getElementById('mf-threshold').textContent =
+    flags.kill_switch_threshold != null ? (flags.kill_switch_threshold * 100).toFixed(0) + '%' : '—';
+
+  // History log entry
+  const histEl = document.getElementById('m-history-list');
+  const placeholder = histEl.querySelector('div[style]');
+  if (placeholder) placeholder.remove();
+
+  const entryClass = m.applied ? 'applied' : (m.reason||'').includes('kill') ? 'kill' : 'calibrate';
+  const entry = document.createElement('div');
+  entry.className = `h-entry ${entryClass}`;
+  entry.innerHTML = `<div class="h-turn">Turn ${turn}</div><div class="h-reason">${m.reason || '—'}</div>`;
+  histEl.prepend(entry);
 }
 </script>
 </body>
