@@ -120,6 +120,7 @@ class VoicePipeline:
         self,
         ctx: FSMContext,
         audio_chunks: AsyncIterator[bytes],
+        hesitation_count: int = 0,
     ) -> TurnResult:
         """Process one caller audio turn through the full pipeline."""
 
@@ -147,8 +148,13 @@ class VoicePipeline:
         ctx.log("bot_response", action=str(action), text=response_text)
 
         # --- SAA-70: Feature extraction + calibration ---
+        # Use a separate text for feature extraction so client-detected hesitations
+        # (mic silence gaps) are counted without polluting the NLU/answer transcript.
+        feat_text = final_text
+        if hesitation_count > 0:
+            feat_text = ' '.join(['um'] * min(hesitation_count, 6)) + ' ' + final_text
         features = self._feature_extractor.extract(
-            text=final_text,
+            text=feat_text,
             duration_ms=duration_ms,
             confidence=confidence,
         )
@@ -156,6 +162,7 @@ class VoicePipeline:
             features,
             self._feature_extractor,
             alpha=self._mirroring_policy.settings.smoothing_alpha,
+            baseline_drift_alpha=self._mirroring_policy.settings.baseline_drift_alpha,
         )
 
         # --- SAA-74: Mirroring policy ---

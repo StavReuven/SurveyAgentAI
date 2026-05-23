@@ -279,10 +279,28 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
 
+    /* Caller speech metrics badge */
+    .caller-metric-bar {
+      background: #0f172a;
+      border: 1px solid #1e3a5f;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin: 8px 16px;
+    }
+    .caller-metric-bar .cm-title { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #0369a1; margin-bottom: 8px; }
+    .cm-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font-size: 12px; }
+    .cm-key { color: #64748b; }
+    .cm-val { font-weight: 700; font-size: 13px; color: #38bdf8; }
+    .cm-val.fast  { color: #4ade80; }
+    .cm-val.slow  { color: #fbbf24; }
+    .cm-val.hesit { color: #f87171; }
+    .wpm-bar-wrap { background: #1e293b; border-radius: 4px; height: 6px; width: 100%; margin-top: 3px; overflow: hidden; }
+    .wpm-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease, background 0.4s ease; }
+
     /* RIGHT: Mirroring telemetry panel */
     .mirror-panel {
-      width: 280px;
-      min-width: 280px;
+      width: 300px;
+      min-width: 300px;
       background: #0f172a;
       border-left: 1px solid #334155;
       display: flex;
@@ -353,6 +371,23 @@
       </div>
       <button class="btn btn-primary" id="start-btn">&#9654; Start Call</button>
       <button class="btn btn-danger"  id="end-btn" disabled>&#9632; End Call</button>
+
+      <!-- Speaking speed buttons — control how fast "you" are speaking -->
+      <div style="margin-top:8px;padding:12px;background:#0f172a;border:1px solid #334155;border-radius:10px;">
+        <div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px;">Your speaking speed</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <button onclick="setPace(60)"  id="pace-slow" style="padding:10px 6px;border-radius:8px;border:2px solid #334155;background:#0f172a;color:#fbbf24;font-size:18px;cursor:pointer;font-weight:700;transition:all .15s;">🐢<br><span style="font-size:10px;font-weight:600;">SLOW<br>60 wpm</span></button>
+          <button onclick="setPace(300)" id="pace-fast" style="padding:10px 6px;border-radius:8px;border:2px solid #334155;background:#0f172a;color:#4ade80;font-size:18px;cursor:pointer;font-weight:700;transition:all .15s;">🐇<br><span style="font-size:10px;font-weight:600;">FAST<br>300 wpm</span></button>
+        </div>
+        <div style="text-align:center;font-size:11px;color:#475569;margin-bottom:8px;">Active: <span id="pace-val" style="color:#38bdf8;font-weight:700;">150 wpm (Normal)</span></div>
+        <input type="range" id="pace-slider" min="30" max="300" value="150" step="10"
+          oninput="updatePaceLabel(this.value)"
+          style="width:100%;accent-color:#38bdf8;margin-bottom:4px;">
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:#334155;"><span>30</span><span>60</span><span>150</span><span>300 wpm</span></div>
+      </div>
+
+      <!-- Test voice button — hear AI at current rate/pitch immediately -->
+      <button onclick="testVoice()" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#a78bfa;font-size:13px;font-weight:600;cursor:pointer;">🔊 Test AI voice now</button>
     </div>
 
     <div class="panel-title" style="margin-top:8px">Session State</div>
@@ -411,8 +446,19 @@
   <div class="mirror-panel">
     <div class="panel-title">🧠 Psycho-Adaptive Mirroring</div>
 
+    <!-- Your speech metrics — updated after every turn -->
+    <div class="caller-metric-bar" id="caller-metrics" style="display:none">
+      <div class="cm-title">🎤 Your Speech (last turn)</div>
+      <div class="cm-row"><span class="cm-key">Speaking rate</span><span class="cm-val" id="cm-wpm">— wpm</span></div>
+      <div class="wpm-bar-wrap"><div class="wpm-bar-fill" id="cm-wpm-bar" style="width:0%;background:#38bdf8;"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#334155;margin-top:2px;"><span>60 wpm</span><span>150 wpm</span><span>300 wpm</span></div>
+      <div class="cm-row" style="margin-top:8px;"><span class="cm-key">Duration</span><span class="cm-val" id="cm-dur">—</span></div>
+      <div class="cm-row"><span class="cm-key">Hesitation markers</span><span class="cm-val" id="cm-hesit">—</span></div>
+      <div class="cm-row"><span class="cm-key">Confidence est.</span><span class="cm-val" id="cm-conf">—</span></div>
+    </div>
+
     <div class="m-section">
-      <div class="m-section-title">Status</div>
+      <div class="m-section-title">AI Response</div>
       <div class="m-row">
         <span class="m-key">Decision</span>
         <span id="m-status-chip"><span class="status-chip chip-disabled">waiting</span></span>
@@ -425,7 +471,7 @@
     </div>
 
     <div class="m-section">
-      <div class="m-section-title">TTS Adjustments (this turn)</div>
+      <div class="m-section-title">AI TTS Adjustments (response)</div>
       <div class="m-row">
         <span class="m-key">Speaking Rate</span>
         <span class="m-val" id="m-rate">1.000×</span>
@@ -463,6 +509,14 @@
         <span class="m-key">Baseline WPM</span>
         <span class="m-val" id="m-baseline-wpm">—</span>
       </div>
+      <div class="m-row">
+        <span class="m-key">Hesitation rate</span>
+        <span class="m-val" id="m-hesit-rate">—</span>
+      </div>
+      <div class="m-row">
+        <span class="m-key">Energy level</span>
+        <span class="m-val" id="m-energy">—</span>
+      </div>
     </div>
 
     <div class="m-section">
@@ -492,6 +546,63 @@ const _watchSessionId  = _urlParams.get('session_id');
 const _watchCampaignId = _urlParams.get('campaign_id');
 let _watchMode = false;
 let _watchPoller = null;
+
+// Mic timing — reset on each recognition start
+let _micStartMs = null;
+let _lastMicDurationMs = 0;   // filled on recognition.onend, used in sendTurn
+
+// Last mirroring decision — applied to browser TTS on every bot utterance
+let _mirrorRate  = 1.0;   // SpeechSynthesisUtterance.rate (0.1–10, 1=normal)
+let _mirrorPitch = 1.0;   // SpeechSynthesisUtterance.pitch (0–2, 1=normal)
+
+// Hesitation words (mirrors backend list)
+const _HESIT = new Set(['um','uh','er','hmm','ah','ehm','like','well','אממ','אה','אהמ']);
+
+function _calcCallerMetrics(text, durationMs) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const wc = Math.max(1, words.length);
+  const hesitations = words.filter(w => _HESIT.has(w.toLowerCase().replace(/[.,!?;:]/g,''))).length;
+  const hesitRate = hesitations / wc;
+  const durSec = durationMs / 1000;
+  const wpm = durSec > 0.1 ? Math.round((wc / durSec) * 60) : null;
+  // confidence mirrors backend _estimate_mock_confidence
+  const rawConf = 0.93 - hesitRate * 0.45;
+  const conf = Math.max(0.48, Math.min(0.97, rawConf));
+  return { wpm, durMs: durationMs, hesitRate, conf, wc };
+}
+
+function updateCallerMetrics(text, durationMs) {
+  const m = _calcCallerMetrics(text, durationMs);
+  const box = document.getElementById('caller-metrics');
+  box.style.display = 'block';
+
+  const wpmEl = document.getElementById('cm-wpm');
+  const wpmBar = document.getElementById('cm-wpm-bar');
+  if (m.wpm !== null) {
+    wpmEl.textContent = m.wpm + ' wpm';
+    wpmEl.className = 'cm-val ' + (m.wpm >= 200 ? 'fast' : m.wpm <= 100 ? 'slow' : '');
+    // map 60–300 wpm to 0–100%
+    const pct = Math.max(0, Math.min(100, ((m.wpm - 60) / 240) * 100));
+    wpmBar.style.width = pct + '%';
+    wpmBar.style.background = m.wpm >= 200 ? '#4ade80' : m.wpm <= 100 ? '#fbbf24' : '#38bdf8';
+  } else {
+    wpmEl.textContent = '— (typed)';
+    wpmEl.className = 'cm-val';
+    wpmBar.style.width = '50%';
+    wpmBar.style.background = '#475569';
+  }
+
+  const durEl = document.getElementById('cm-dur');
+  durEl.textContent = durationMs > 0 ? (durationMs / 1000).toFixed(1) + 's' : '— (typed)';
+
+  const hesitEl = document.getElementById('cm-hesit');
+  hesitEl.textContent = (m.hesitRate * 100).toFixed(0) + '%  (' + Math.round(m.hesitRate * m.wc) + '/' + m.wc + ' words)';
+  hesitEl.className = 'cm-val ' + (m.hesitRate > 0.2 ? 'hesit' : m.hesitRate > 0.05 ? 'slow' : '');
+
+  const confEl = document.getElementById('cm-conf');
+  confEl.textContent = (m.conf * 100).toFixed(0) + '%';
+  confEl.className = 'cm-val ' + (m.conf >= 0.80 ? 'fast' : m.conf >= 0.65 ? '' : 'hesit');
+}
 
 // Web Speech API (browser TTS)
 const synth = window.speechSynthesis;
@@ -527,9 +638,72 @@ function speak(text) {
   const utt = new SpeechSynthesisUtterance(text);
   utt.voice = selectedVoice;
   utt.lang  = _ttsLang.startsWith('he') ? 'he-IL' : 'en-US';
-  utt.rate  = 0.95;
-  utt.pitch = 1.0;
+  utt.rate  = _mirrorRate;    // set by applyMirroringToTTS() before each bot turn
+  utt.pitch = _mirrorPitch;
   synth.speak(utt);
+}
+
+function setPace(wpm) {
+  document.getElementById('pace-slider').value = wpm;
+  updatePaceLabel(wpm);
+  // highlight active button
+  document.getElementById('pace-slow').style.borderColor = wpm === 60  ? '#fbbf24' : '#334155';
+  document.getElementById('pace-fast').style.borderColor = wpm === 300 ? '#4ade80' : '#334155';
+}
+
+function updatePaceLabel(val) {
+  val = parseInt(val, 10);
+  const el = document.getElementById('pace-val');
+  if (val <= 90)        { el.textContent = `🐢 ${val} wpm — SLOW`;    el.style.color = '#fbbf24'; }
+  else if (val >= 220)  { el.textContent = `🐇 ${val} wpm — FAST`;    el.style.color = '#4ade80'; }
+  else if (val >= 120 && val <= 180) { el.textContent = `${val} wpm (Normal)`; el.style.color = '#38bdf8'; }
+  else                  { el.textContent = `${val} wpm`;              el.style.color = '#38bdf8'; }
+  // sync button highlights
+  document.getElementById('pace-slow').style.borderColor = val <= 90  ? '#fbbf24' : '#334155';
+  document.getElementById('pace-fast').style.borderColor = val >= 220 ? '#4ade80' : '#334155';
+}
+
+// Speak a short demo sentence at the current _mirrorRate / _mirrorPitch
+// so the user can hear the effect immediately without waiting for a turn.
+function testVoice() {
+  if (!synth) return;
+  synth.cancel();
+  const rate  = _mirrorRate;
+  const pitch = _mirrorPitch;
+  const sentences = [
+    `Hello, I am speaking at rate ${rate.toFixed(2)} with ${pitch > 1.05 ? 'higher' : pitch < 0.95 ? 'lower' : 'neutral'} pitch.`,
+    `I am currently mirroring your speaking speed. Rate is ${rate.toFixed(2)} times normal.`,
+    `The quick brown fox jumps over the lazy dog.`,
+  ];
+  const text = sentences[Math.floor(Math.random() * sentences.length)];
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.voice = selectedVoice;
+  utt.lang  = 'en-US';
+  utt.rate  = rate;
+  utt.pitch = pitch;
+  synth.speak(utt);
+
+  // Show what's playing
+  const btn = document.querySelector('button[onclick="testVoice()"]');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = `▶ rate=${rate.toFixed(2)}× pitch=${pitch.toFixed(2)} — playing…`;
+    utt.onend = () => { btn.textContent = orig; };
+  }
+}
+
+// Convert mirroring decision into Web Speech API parameters and store them.
+// speaking_rate [0.65–1.35] maps directly to utt.rate.
+// pitch semitones [-2, +2] → utt.pitch: factor 0.60 makes the change clearly audible.
+function applyMirroringToTTS(mirroring) {
+  if (mirroring && mirroring.applied) {
+    _mirrorRate  = mirroring.speaking_rate;
+    _mirrorPitch = 1.0 + (mirroring.pitch / 2.0) * 0.35;      // ±2 st → ±0.35 (gentle)
+    _mirrorPitch = Math.max(0.5, Math.min(1.5, _mirrorPitch));
+  } else {
+    _mirrorRate  = 1.0;
+    _mirrorPitch = 1.0;
+  }
 }
 
 // Watch mode bootstrap
@@ -603,7 +777,7 @@ async function refreshWatchSession() {
       if (entry.event === 'bot_response' && entry.text) {
         if (rendered >= prevCount) {
           addBubble('bot', entry.text, (entry.action || '').replace(/_/g,' '));
-          if (_watchVoiceEnabled) speak(entry.text);
+          if (_watchVoiceEnabled) speak(entry.text);  // uses _mirrorRate/_mirrorPitch set above
         }
         rendered++;
       } else if (entry.event === 'caller_input' && entry.text) {
@@ -618,7 +792,10 @@ async function refreshWatchSession() {
     document.getElementById('s-retries').textContent = st.retry_count ?? '—';
 
     // Update mirroring panel from session state (includes last_mirroring spread in)
-    if (st.mirroring) updateMirroringPanel(st.mirroring, turnCount);
+    if (st.mirroring) {
+      applyMirroringToTTS(st.mirroring);
+      updateMirroringPanel(st.mirroring, turnCount);
+    }
 
     if (st.completed_at || (st.current_state && st.current_state.includes('DONE'))) {
       clearInterval(_watchPoller);
@@ -629,18 +806,19 @@ async function refreshWatchSession() {
 }
 
 // Boot
+let _campaigns = [];
 async function loadCampaigns() {
   const res = await fetch(`${API}/api/campaigns`);
-  const list = await res.json();
+  _campaigns = await res.json();
   const sel = document.getElementById('campaign-select');
   sel.innerHTML = '<option value="">&mdash; select &mdash;</option>';
-  list.filter(c => c.status === 'active').forEach(c => {
+  _campaigns.filter(c => c.status === 'active').forEach(c => {
     const o = document.createElement('option');
     o.value = c.id;
     o.textContent = `${c.name} (${c.language})`;
     sel.appendChild(o);
   });
-  if (!list.filter(c => c.status === 'active').length) {
+  if (!_campaigns.filter(c => c.status === 'active').length) {
     sel.innerHTML = '<option value="">No active campaigns</option>';
   }
 }
@@ -677,7 +855,24 @@ function addBubble(role, text, actionTag) {
 
   const label = document.createElement('div');
   label.className = 'bubble-label';
-  label.textContent = role === 'bot' ? 'AI Bot' : 'Caller';
+  if (role === 'bot') {
+    // Show the active TTS rate & pitch next to the label
+    const rateChanged = Math.abs(_mirrorRate - 1.0) >= 0.01;
+    const pitchChanged = Math.abs(_mirrorPitch - 1.0) >= 0.03;
+    let chips = '';
+    if (rateChanged) {
+      const col = _mirrorRate > 1.0 ? '#4ade80' : '#fbbf24';
+      chips += ` <span style="color:${col};font-size:10px;font-weight:700;">rate ${_mirrorRate.toFixed(2)}×</span>`;
+    }
+    if (pitchChanged) {
+      const semitones = ((_mirrorPitch - 1.0) / 0.30) * 2.0;
+      const col = semitones > 0 ? '#a78bfa' : '#94a3b8';
+      chips += ` <span style="color:${col};font-size:10px;font-weight:700;">pitch ${semitones >= 0 ? '+' : ''}${semitones.toFixed(1)}st</span>`;
+    }
+    label.innerHTML = 'AI Bot' + chips;
+  } else {
+    label.textContent = 'Caller';
+  }
   wrap.appendChild(label);
 
   const bubble = document.createElement('div');
@@ -699,6 +894,75 @@ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecogni
 let recognition = null;
 let isListening = false;
 
+// --- Web Audio API silence-gap hesitation detector ---
+// Chrome strips filler words ("um","uh") from transcripts. Instead we measure raw
+// microphone amplitude every 40ms. A silence gap of 450–1400ms AFTER speech has begun
+// counts as one hesitation. Gaps >1400ms are end-of-utterance, not hesitations.
+let _micHesitations  = 0;
+let _audioCtx        = null;
+let _silenceAnalyser = null;
+let _silenceInterval = null;
+let _silenceOnsetMs  = null;   // when current silence started (null = not in silence)
+let _inHesitation    = false;  // latched true while counting one silence window
+let _speechStarted   = false;  // only count pauses after first real speech detected
+
+const _SILENCE_RMS   = 0.015;  // amplitude below this = silence
+const _HESIT_MIN_MS  = 900;    // silence must last at least this long (breathing/thinking room)
+const _HESIT_MAX_MS  = 3000;   // silence longer than this = end of speech, not hesitation
+
+async function _startSilenceDetection() {
+  _micHesitations = 0;
+  _silenceOnsetMs = null;
+  _inHesitation   = false;
+  _speechStarted  = false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    _silenceAnalyser = _audioCtx.createAnalyser();
+    _silenceAnalyser.fftSize = 256;
+    _audioCtx.createMediaStreamSource(stream).connect(_silenceAnalyser);
+    const buf = new Float32Array(_silenceAnalyser.fftSize);
+
+    _silenceInterval = setInterval(() => {
+      if (!isListening) return;
+      _silenceAnalyser.getFloatTimeDomainData(buf);
+      const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
+
+      if (rms >= _SILENCE_RMS) {
+        // Amplitude above threshold → speech
+        _speechStarted  = true;
+        _silenceOnsetMs = null;
+        _inHesitation   = false;
+      } else if (_speechStarted) {
+        // Silence after speech has started
+        if (_silenceOnsetMs === null) {
+          _silenceOnsetMs = performance.now();
+        } else {
+          const dur = performance.now() - _silenceOnsetMs;
+          if (dur >= _HESIT_MIN_MS && dur < _HESIT_MAX_MS && !_inHesitation) {
+            _inHesitation = true;   // latch: one count per silence window
+            _micHesitations++;
+            document.getElementById('caller-input').placeholder =
+              `Listening… [${_micHesitations} pause${_micHesitations > 1 ? 's' : ''} detected]`;
+          }
+        }
+      }
+    }, 40);
+  } catch (e) {
+    // Mic access denied or AudioContext unavailable — degrade gracefully
+    console.warn('Silence detection unavailable:', e.message);
+  }
+}
+
+function _stopSilenceDetection() {
+  clearInterval(_silenceInterval); _silenceInterval = null;
+  if (_audioCtx) { _audioCtx.close().catch(() => {}); _audioCtx = null; }
+  _silenceAnalyser = null;
+  _silenceOnsetMs  = null;
+  _inHesitation    = false;
+  _speechStarted   = false;
+}
+
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
   recognition.continuous = false;
@@ -706,10 +970,13 @@ if (SpeechRecognition) {
 
   recognition.onstart = () => {
     isListening = true;
+    _micStartMs = performance.now();
+    _lastMicDurationMs = 0;
     document.getElementById('mic-btn').classList.add('listening');
     document.getElementById('listen-label').style.display = 'inline';
     document.getElementById('caller-input').value = '';
     document.getElementById('caller-input').placeholder = 'Listening…';
+    _startSilenceDetection();
   };
 
   recognition.onresult = (e) => {
@@ -723,15 +990,21 @@ if (SpeechRecognition) {
   };
 
   recognition.onend = () => {
+    _stopSilenceDetection();
     isListening = false;
+    if (_micStartMs !== null) {
+      _lastMicDurationMs = performance.now() - _micStartMs;
+      _micStartMs = null;
+    }
     document.getElementById('mic-btn').classList.remove('listening');
     document.getElementById('listen-label').style.display = 'none';
     document.getElementById('caller-input').placeholder = 'Speak or type your reply…';
     const text = document.getElementById('caller-input').value.trim();
-    if (text) sendTurn();
+    if (text) sendTurn(_lastMicDurationMs);
   };
 
   recognition.onerror = () => {
+    _stopSilenceDetection();
     isListening = false;
     document.getElementById('mic-btn').classList.remove('listening');
     document.getElementById('listen-label').style.display = 'none';
@@ -775,6 +1048,15 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   campaignId = cid;
   turnCount = 0;
 
+  // Auto-set locale based on campaign language
+  const camp = _campaigns.find(c => String(c.id) === String(cid));
+  if (camp) {
+    const isHe = camp.language && camp.language.startsWith('he');
+    const localeInp = document.getElementById('locale-input');
+    localeInp.value = isHe ? 'he-IL' : 'en-US';
+    selectVoiceForLang(camp.language || 'en');
+  }
+
   document.getElementById('start-btn').disabled = true;
   document.getElementById('end-btn').disabled = false;
   document.getElementById('caller-input').disabled = false;
@@ -814,28 +1096,43 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   }
 });
 
-// Send turn
-async function sendTurn() {
+// Send turn — durationMs is real mic time; 0 means typed → derive from pace slider
+async function sendTurn(durationMs = 0) {
   const inp = document.getElementById('caller-input');
-  const text = inp.value.trim();
+  let text = inp.value.trim();
   if (!text || !sessionId) return;
+
+  // Capture mic-detected hesitation count then reset for next turn.
+  // Sent to backend as a separate field — transcript stays clean for NLU/answers.
+  const hesitFromMic = _micHesitations;
+  _micHesitations = 0;
 
   inp.value = '';
   inp.disabled = true;
   document.getElementById('send-btn').disabled = true;
+  _lastMicDurationMs = 0;   // reset so keyboard-Enter doesn't reuse last mic time
+
+  // If pace slider is set and no real mic time, compute duration from simulated WPM
+  const sliderWpm = parseInt(document.getElementById('pace-slider').value, 10);
+  if (!durationMs && sliderWpm > 0) {
+    const wordCount = Math.max(1, text.trim().split(/\s+/).length);
+    durationMs = Math.round((wordCount / sliderWpm) * 60_000);  // ms to speak at sliderWpm
+  }
 
   turnCount++;
   addBubble('caller', text);
+  updateCallerMetrics(text, durationMs);
 
   try {
     const res = await fetch(`${API}/api/campaigns/${campaignId}/voice/sessions/${sessionId}/turn`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ transcript: text, audio_duration_ms: text.length * 60 })
+      body: JSON.stringify({ transcript: text, audio_duration_ms: Math.round(durationMs), mic_hesitation_count: hesitFromMic })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Turn failed');
 
+    applyMirroringToTTS(data.mirroring);   // must come before speak()
     addBubble('bot', data.response_text, data.dialogue_action.replace(/_/g,' '));
     speak(data.response_text);
     updateState(data);
@@ -861,7 +1158,7 @@ async function sendTurn() {
   inp.focus();
 }
 
-document.getElementById('send-btn').addEventListener('click', sendTurn);
+document.getElementById('send-btn').addEventListener('click', () => sendTurn());
 document.getElementById('caller-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendTurn();
 });
@@ -903,7 +1200,10 @@ async function startAIDemo() {
       turnCount = history.length;
       updateState(st);
       updateAnswers(st.answers);
-      if (st.mirroring) updateMirroringPanel(st.mirroring, turnCount);
+      if (st.mirroring) {
+        applyMirroringToTTS(st.mirroring);
+        updateMirroringPanel(st.mirroring, turnCount);
+      }
 
       if (st.completed_at || !st.demo_running) {
         clearInterval(_demoPoller);
@@ -1020,9 +1320,25 @@ function updateMirroringPanel(m, turn) {
   calEl.className = 'm-val ' + (isCalibrated ? 'green' : 'yellow');
 
   const smoothedWpm = smoothed.speaking_rate_wpm;
-  document.getElementById('m-wpm').textContent = smoothedWpm != null ? smoothedWpm.toFixed(1) + ' wpm' : '—';
+  const smWpmEl = document.getElementById('m-wpm');
+  smWpmEl.textContent = smoothedWpm != null ? smoothedWpm.toFixed(1) + ' wpm' : '—';
+  smWpmEl.className = 'm-val ' + (smoothedWpm >= 200 ? 'green' : smoothedWpm <= 100 ? 'yellow' : 'blue');
+
   const baselineWpm = baseline.speaking_rate_wpm;
   document.getElementById('m-baseline-wpm').textContent = baselineWpm != null ? baselineWpm.toFixed(1) + ' wpm' : '—';
+
+  const hesitEl = document.getElementById('m-hesit-rate');
+  if (smoothed.hesitation_rate != null) {
+    const hr = smoothed.hesitation_rate;
+    hesitEl.textContent = (hr * 100).toFixed(1) + '%';
+    hesitEl.className = 'm-val ' + (hr > 0.2 ? 'red' : hr > 0.05 ? 'yellow' : 'green');
+  } else { hesitEl.textContent = '—'; hesitEl.className = 'm-val muted'; }
+
+  const energyEl = document.getElementById('m-energy');
+  if (smoothed.energy_level != null) {
+    energyEl.textContent = (smoothed.energy_level * 100).toFixed(0) + '%';
+    energyEl.className = 'm-val ' + (smoothed.energy_level >= 0.7 ? 'green' : smoothed.energy_level >= 0.4 ? 'yellow' : 'red');
+  } else { energyEl.textContent = '—'; energyEl.className = 'm-val muted'; }
 
   // Monitoring flags
   const mfEnabled = document.getElementById('mf-enabled');

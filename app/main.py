@@ -274,6 +274,11 @@ def voice_simulator():
     return FileResponse("app/static/voice.html")
 
 
+@app.get("/gallery")
+def gallery_page():
+    return FileResponse("app/static/gallery.html")
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "campaign-builder"}
@@ -816,7 +821,11 @@ def list_call_attempts(campaign_id: int, limit: int = 30, db: Session = Depends(
 _voice_sessions: dict[str, dict] = {}
 
 # SAA-79/81: global mirroring settings (mutated in place by the settings endpoint)
-_mirroring_settings = MirroringSettings()
+_mirroring_settings = MirroringSettings(
+    smoothing_alpha=0.60,    # high alpha: EMA reacts within 1-2 turns (was 0.30)
+    calibration_turns=1,     # lock baseline after first turn (was 2)
+    max_rate_delta=0.35,     # ±35% range → 0.65x–1.35x (was ±20%)
+)
 _pipeline = VoicePipeline(mirroring_settings=_mirroring_settings)
 
 # Wire session store into dashboard router so live-calls endpoint can read it.
@@ -830,17 +839,20 @@ class VoiceSessionStartRequest(BaseModel):
 
 class VoiceTurnRequest(BaseModel):
     transcript: str          # text from caller (or forwarded from STT adapter)
-    audio_duration_ms: float = 0.0
+    audio_duration_ms: float | None = 0.0       # None-safe: JS may send null on click events
+    mic_hesitation_count: int | None = 0        # pauses detected by Web Audio API silence analysis
 
 
 # SAA-80/81: Pydantic schema for mirroring settings
 class MirroringSettingsRequest(BaseModel):
     enabled: bool = True
-    max_rate_delta: float = 0.20
+    max_rate_delta: float = 0.35
     max_pitch_semitones: float = 2.0
     kill_switch_rapport_threshold: float = 0.50
-    smoothing_alpha: float = 0.30
-    calibration_turns: int = 2
+    smoothing_alpha: float = 0.60
+    calibration_turns: int = 1
+    baseline_drift_alpha: float = 0.04
+    rapport_rate_weight: bool = True
 
 
 _HESITATION_WORDS = frozenset(
@@ -984,13 +996,24 @@ async def process_voice_turn(
     # Override mock STT to return the submitted transcript directly.
     # Confidence is estimated from the text so rapport actually varies:
     # hesitation markers lower it, short/unclear answers drop it further.
+    # If the frontend measured real mic duration, derive ms_per_word from it so
+    # WPM reflects the caller's actual speaking pace.
     from .voice.stt.adapter import MockSTTAdapter
+    _words = payload.transcript.split()
+    _word_count = max(1, len(_words))
+    _dur = payload.audio_duration_ms or 0.0
+    _ms_per_word = _dur / _word_count if _dur > 0 else None
+
+    # STT mock returns the clean transcript — NLU and stored answers stay clean.
+    # Mic-detected hesitations are passed separately to process_turn for feature extraction only.
     _pipeline._stt = MockSTTAdapter(
         responses=[payload.transcript],
         confidence=_estimate_mock_confidence(payload.transcript),
+        ms_per_word=_ms_per_word,
     )
 
-    result = await _pipeline.process_turn(ctx, _text_as_audio_chunks())
+    _hesit_n = min(payload.mic_hesitation_count or 0, 6)
+    result = await _pipeline.process_turn(ctx, _text_as_audio_chunks(), hesitation_count=_hesit_n)
 
     session["tts_metrics"].append(result.tts_metrics)
     session["stt_metrics"].append(result.stt_metrics)
@@ -1118,6 +1141,8 @@ def get_mirroring_settings():
         "kill_switch_rapport_threshold": s.kill_switch_rapport_threshold,
         "smoothing_alpha": s.smoothing_alpha,
         "calibration_turns": s.calibration_turns,
+        "baseline_drift_alpha": s.baseline_drift_alpha,
+        "rapport_rate_weight": s.rapport_rate_weight,
     }
 
 
@@ -1130,6 +1155,8 @@ def update_mirroring_settings(payload: MirroringSettingsRequest):
     _mirroring_settings.kill_switch_rapport_threshold = max(0.0, min(1.0, payload.kill_switch_rapport_threshold))
     _mirroring_settings.smoothing_alpha = max(0.05, min(0.95, payload.smoothing_alpha))
     _mirroring_settings.calibration_turns = max(1, min(10, payload.calibration_turns))
+    _mirroring_settings.baseline_drift_alpha = max(0.0, min(0.20, payload.baseline_drift_alpha))
+    _mirroring_settings.rapport_rate_weight = payload.rapport_rate_weight
     return get_mirroring_settings()
 
 

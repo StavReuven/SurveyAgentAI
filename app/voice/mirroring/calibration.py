@@ -31,10 +31,13 @@ class SessionCalibration:
         features: VocalFeatures,
         extractor: FeatureExtractor,
         alpha: float = 0.3,
+        baseline_drift_alpha: float = 0.0,
     ) -> VocalFeatures:
         """Ingest one turn's features, smooth them, and return the updated EMA.
 
         Locks the baseline snapshot once calibration_turns is reached.
+        After lock, if baseline_drift_alpha > 0 the baseline slowly drifts
+        toward the caller's evolving vocal style (sliding baseline).
         """
         self.turns_observed += 1
 
@@ -44,7 +47,6 @@ class SessionCalibration:
             self.smoothed = extractor.smooth(features, self.smoothed, alpha=alpha)
 
         if self.turns_observed == self.calibration_turns:
-            # Snapshot the baseline once we have enough turns
             baseline_features = self.smoothed
             self.baseline = VocalFeatures(
                 speaking_rate_wpm=baseline_features.speaking_rate_wpm,
@@ -53,6 +55,10 @@ class SessionCalibration:
                 hesitation_rate=baseline_features.hesitation_rate,
                 turn_duration_ms=baseline_features.turn_duration_ms,
             )
+        elif self.baseline is not None and baseline_drift_alpha > 0:
+            # Sliding baseline: gently pull toward current smoothed so mirroring
+            # remains meaningful as the caller's style evolves mid-call.
+            self.baseline = extractor.smooth(self.smoothed, self.baseline, alpha=baseline_drift_alpha)
 
         return self.smoothed
 

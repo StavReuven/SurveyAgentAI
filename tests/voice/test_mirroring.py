@@ -313,3 +313,90 @@ class TestVocalFeaturesToDict:
             "speaking_rate_wpm", "pitch_relative", "energy_level",
             "hesitation_rate", "turn_duration_ms",
         }
+
+
+# ---------------------------------------------------------------------------
+# Improvements: sliding baseline, rapport-weighted rate, hesitation pitch
+# ---------------------------------------------------------------------------
+
+class TestSlidingBaseline:
+    def test_baseline_frozen_when_drift_alpha_zero(self):
+        extractor = FeatureExtractor()
+        cal = _calibrated(wpm=100.0)
+        original_baseline = cal.baseline.speaking_rate_wpm
+
+        # Many fast turns — baseline must not move
+        for _ in range(5):
+            cal.update(_make_features(wpm=300.0), extractor, baseline_drift_alpha=0.0)
+        assert cal.baseline.speaking_rate_wpm == original_baseline
+
+    def test_baseline_drifts_when_alpha_positive(self):
+        extractor = FeatureExtractor()
+        cal = _calibrated(wpm=100.0)
+        original_baseline = cal.baseline.speaking_rate_wpm
+
+        # Many fast turns with drift enabled — baseline should move toward 300
+        for _ in range(10):
+            cal.update(_make_features(wpm=300.0), extractor, baseline_drift_alpha=0.10)
+        assert cal.baseline.speaking_rate_wpm > original_baseline
+
+    def test_baseline_drift_does_not_overshoot(self):
+        extractor = FeatureExtractor()
+        cal = _calibrated(wpm=100.0)
+
+        for _ in range(50):
+            cal.update(_make_features(wpm=200.0), extractor, baseline_drift_alpha=0.10)
+        # With alpha=0.10 and 50 turns it should converge but not overshoot 200
+        assert cal.baseline.speaking_rate_wpm <= 200.0 + 1.0
+
+
+class TestRapportWeightedRate:
+    def _policy_with_weight(self) -> MirroringPolicy:
+        return MirroringPolicy(MirroringSettings(rapport_rate_weight=True))
+
+    def test_high_rapport_gives_full_mirror(self):
+        policy = self._policy_with_weight()
+        extractor = FeatureExtractor()
+        cal = SessionCalibration(calibration_turns=2)
+        cal.update(_make_features(wpm=100.0), extractor)
+        cal.update(_make_features(wpm=100.0), extractor)
+        # Caller speeds up: smoothed > baseline
+        cal.update(_make_features(wpm=200.0), extractor)
+
+        decision_high = policy.compute(cal, current_rapport=0.90)
+        decision_mid = policy.compute(cal, current_rapport=0.70)
+
+        # High rapport should rate-adjust more than mid rapport
+        assert decision_high.speaking_rate >= decision_mid.speaking_rate
+
+    def test_low_rapport_nudges_rate_down(self):
+        policy = self._policy_with_weight()
+        cal = _calibrated(wpm=120.0)
+        # rapport just above kill-switch but below 0.65 → de-escalation bias
+        decision = policy.compute(cal, current_rapport=0.55)
+        # Kill switch fires below 0.50, but 0.55 is above it; rate should still be < 1.0
+        # Actually kill switch threshold is 0.50, so 0.55 triggers the nudge path
+        assert decision.applied
+        assert decision.speaking_rate < 1.0
+
+
+class TestHesitationPitchPenalty:
+    def test_hesitant_speech_lowers_pitch(self):
+        policy = MirroringPolicy(MirroringSettings())
+        extractor = FeatureExtractor()
+
+        cal_calm = SessionCalibration(calibration_turns=2)
+        feat_calm = _make_features(pitch=0.5, hesitation=0.0)
+        cal_calm.update(feat_calm, extractor)
+        cal_calm.update(feat_calm, extractor)
+
+        cal_hesitant = SessionCalibration(calibration_turns=2)
+        feat_hesitant = _make_features(pitch=0.5, hesitation=0.6)
+        cal_hesitant.update(feat_hesitant, extractor)
+        cal_hesitant.update(feat_hesitant, extractor)
+
+        d_calm = policy.compute(cal_calm, current_rapport=0.85)
+        d_hesitant = policy.compute(cal_hesitant, current_rapport=0.85)
+
+        # Same raw pitch_relative but hesitant caller should yield lower pitch output
+        assert d_hesitant.pitch < d_calm.pitch
