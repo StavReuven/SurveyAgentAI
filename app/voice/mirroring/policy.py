@@ -35,6 +35,8 @@ class MirroringSettings:
     kill_switch_rapport_threshold: float = 0.50   # SAA-76
     smoothing_alpha: float = 0.30        # SAA-71: EMA weight
     calibration_turns: int = 2           # SAA-72: turns before baseline is locked
+    baseline_drift_alpha: float = 0.04  # how fast baseline drifts after lock (0 = frozen)
+    rapport_rate_weight: bool = True    # scale rate delta by rapport level
 
 
 @dataclass
@@ -113,14 +115,34 @@ class MirroringPolicy:
         # --- Rate adjustment (SAA-75 bound) ---
         if baseline and baseline.speaking_rate_wpm > 0:
             raw_ratio = feat.speaking_rate_wpm / baseline.speaking_rate_wpm
-            rate_delta = max(-s.max_rate_delta, min(s.max_rate_delta, raw_ratio - 1.0))
+            raw_delta = raw_ratio - 1.0
+
+            # Improvement: scale aggressiveness by rapport level.
+            # High rapport (>0.85) → full mirror; mid (0.65-0.85) → 60%;
+            # low-ish (threshold..0.65) → gentle slow-down bias (−0.05).
+            if s.rapport_rate_weight:
+                if current_rapport >= 0.85:
+                    rapport_scale = 1.0
+                elif current_rapport >= 0.65:
+                    rapport_scale = 0.6
+                else:
+                    raw_delta = -0.05  # nudge slower to de-escalate
+                    rapport_scale = 1.0
+            else:
+                rapport_scale = 1.0
+
+            rate_delta = max(-s.max_rate_delta, min(s.max_rate_delta, raw_delta * rapport_scale))
         else:
             rate_delta = 0.0
         speaking_rate = round(1.0 + rate_delta, 4)
 
         # --- Pitch adjustment (SAA-75 bound) ---
-        # feat.pitch_relative ∈ [−1, +1]; scale to semitones then clamp
-        pitch = feat.pitch_relative * s.max_pitch_semitones
+        # Improvement: combine confidence-based pitch_relative with hesitation penalty.
+        # High hesitation → lower pitch regardless of confidence (grounds the voice).
+        # Coefficient 1.0: 30% smoothed hesitation drops pitch by ~0.30 st — noticeable but gentle
+        hesitation_penalty = feat.hesitation_rate * 1.0
+        adjusted_pitch_relative = feat.pitch_relative - hesitation_penalty
+        pitch = adjusted_pitch_relative * s.max_pitch_semitones
         pitch = round(max(-s.max_pitch_semitones, min(s.max_pitch_semitones, pitch)), 4)
 
         decision = MirroringDecision(
@@ -132,7 +154,8 @@ class MirroringPolicy:
                 f"rate={speaking_rate:.3f},"
                 f"pitch={pitch:+.2f}st,"
                 f"rapport={current_rapport:.2f},"
-                f"wpm={feat.speaking_rate_wpm:.0f})"
+                f"wpm={feat.speaking_rate_wpm:.0f},"
+                f"hesit={feat.hesitation_rate:.2f})"
             ),
         )
         logger.info("mirroring applied: %s", decision.reason)   # SAA-77
