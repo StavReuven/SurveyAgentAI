@@ -734,8 +734,7 @@ async function enterWatchMode(wSessionId, wCampaignId) {
     }
   } catch(_) {}
 
-  // kick off auto-advance on server (2-second interval between turns)
-  await fetch(`${API}/api/sessions/${wSessionId}/demo-run?interval=2`, { method: 'POST' });
+  // Watch mode: do NOT auto-advance — real caller drives the session via Twilio
 
   // load current state immediately then poll
   await refreshWatchSession();
