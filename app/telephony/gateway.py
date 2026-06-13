@@ -43,7 +43,7 @@ class TelephonyGateway:
                 status_callback=status_url,
                 status_callback_method="POST",
                 status_callback_event=["initiated", "ringing", "answered", "completed"],
-                timeout=30,
+                timeout=60,
             )
         except TwilioRestException as exc:
             raise RuntimeError(f"Twilio error: {exc.msg}") from exc
