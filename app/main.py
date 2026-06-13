@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -25,6 +26,7 @@ from .models import (
     Participant,
     Question,
 )
+from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
 from .voice.pipeline import VoicePipeline
@@ -50,7 +52,22 @@ from .schemas import (
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0")
+_scheduler_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global _scheduler_task
+    if not getattr(_app.state, "disable_scheduler", False):
+        if _scheduler_task is None or _scheduler_task.done():
+            _scheduler_task = asyncio.create_task(_scheduler_loop())
+    yield
+    if _scheduler_task:
+        _scheduler_task.cancel()
+        _scheduler_task = None
+
+
+app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0", lifespan=lifespan)
 app.include_router(dashboard_router)
 app.add_middleware(
     CORSMiddleware,
@@ -62,7 +79,6 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 SCHEDULER_TICK_SECONDS = 5
-_scheduler_task: asyncio.Task | None = None  # noqa: E501
 
 
 def _utcnow() -> datetime:
@@ -245,23 +261,6 @@ async def _scheduler_loop():
             db.close()
 
         await asyncio.sleep(SCHEDULER_TICK_SECONDS)
-
-
-@app.on_event("startup")
-async def startup_scheduler():
-    global _scheduler_task
-    if getattr(app.state, "disable_scheduler", False):
-        return
-    if _scheduler_task is None or _scheduler_task.done():
-        _scheduler_task = asyncio.create_task(_scheduler_loop())
-
-
-@app.on_event("shutdown")
-async def shutdown_scheduler():
-    global _scheduler_task
-    if _scheduler_task:
-        _scheduler_task.cancel()
-        _scheduler_task = None
 
 
 @app.get("/")
@@ -826,7 +825,8 @@ _mirroring_settings = MirroringSettings(
     calibration_turns=1,     # lock baseline after first turn (was 2)
     max_rate_delta=0.35,     # ±35% range → 0.65x–1.35x (was ±20%)
 )
-_pipeline = VoicePipeline(mirroring_settings=_mirroring_settings)
+_agent_service = AgentAIService()   # uses ANTHROPIC_API_KEY env var; falls back to rules if absent
+_pipeline = VoicePipeline(mirroring_settings=_mirroring_settings, agent_service=_agent_service)
 
 # Wire session store into dashboard router so live-calls endpoint can read it.
 set_live_sessions_store(_voice_sessions)
@@ -1398,7 +1398,7 @@ _demo_run_tasks: dict[str, asyncio.Task] = {}
 
 def _mock_answer_for_question(
     question_type: str,
-    config: dict,
+    _config: dict,
     state: str,
     language: str = "en",
     hesitant: bool = False,
@@ -1434,7 +1434,7 @@ def _mock_answer_for_question(
     return random.choice(hesitant_ if hesitant else fluent)
 
 
-async def _run_demo_session(session_id: str, campaign_id: int, interval: float = 2.0):
+async def _run_demo_session(session_id: str, _campaign_id: int, interval: float = 2.0):
     """Auto-advance a session by sending simulated answers until complete.
 
     Alternates between fluent and hesitant answers so mirroring has signal to work with.
