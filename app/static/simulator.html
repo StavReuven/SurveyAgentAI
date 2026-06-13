@@ -448,8 +448,7 @@ async function enterWatchMode(wSessionId, wCampaignId) {
     }
   } catch(_) {}
 
-  // kick off auto-advance on server
-  await fetch(`${API}/api/sessions/${wSessionId}/demo-run`, { method: 'POST' });
+  // Watch mode: do NOT kick off demo-run — real caller drives the session
 
   // load current state immediately then poll
   await refreshWatchSession();
