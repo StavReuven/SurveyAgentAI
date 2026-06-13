@@ -29,6 +29,9 @@ from .voice.dialogue.fsm import QuestionContext
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
 from .voice.pipeline import VoicePipeline
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
+from .telephony.router import router as telephony_router
+from .telephony.session_store import get_store as get_telephony_store
+from .telephony.timeouts import start_watchdog
 from .schemas import (
     CampaignCreate,
     CampaignExecutionOut,
@@ -52,6 +55,7 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0")
 app.include_router(dashboard_router)
+app.include_router(telephony_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -247,21 +251,29 @@ async def _scheduler_loop():
         await asyncio.sleep(SCHEDULER_TICK_SECONDS)
 
 
+_telephony_watchdog: asyncio.Task | None = None
+
+
 @app.on_event("startup")
 async def startup_scheduler():
-    global _scheduler_task
+    global _scheduler_task, _telephony_watchdog
     if getattr(app.state, "disable_scheduler", False):
         return
     if _scheduler_task is None or _scheduler_task.done():
         _scheduler_task = asyncio.create_task(_scheduler_loop())
+    if _telephony_watchdog is None or _telephony_watchdog.done():
+        _telephony_watchdog = start_watchdog(get_telephony_store())
 
 
 @app.on_event("shutdown")
 async def shutdown_scheduler():
-    global _scheduler_task
+    global _scheduler_task, _telephony_watchdog
     if _scheduler_task:
         _scheduler_task.cancel()
         _scheduler_task = None
+    if _telephony_watchdog:
+        _telephony_watchdog.cancel()
+        _telephony_watchdog = None
 
 
 @app.get("/")
