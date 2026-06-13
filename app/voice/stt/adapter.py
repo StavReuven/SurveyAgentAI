@@ -69,10 +69,12 @@ class MockSTTAdapter(STTAdapter):
         responses: list[str] | None = None,
         config: STTConfig | None = None,
         confidence: float = 0.92,
+        ms_per_word: float | None = None,
     ) -> None:
         super().__init__(config)
         self._responses: list[str] = responses or ["okay"]
         self._confidence = confidence
+        self._ms_per_word = ms_per_word  # if set, overrides char-based estimate
         self._index = 0
 
     async def stream(
@@ -86,6 +88,11 @@ class MockSTTAdapter(STTAdapter):
         text = self._responses[self._index % len(self._responses)]
         self._index += 1
 
+        if self._ms_per_word is not None:
+            duration_ms = max(1, len(text.split())) * self._ms_per_word
+        else:
+            duration_ms = len(text) * 60.0  # rough char-based approximation
+
         # Emit a partial first, then a final
         partial_text = text[: max(1, len(text) // 2)]
         yield TranscriptEvent(
@@ -98,5 +105,5 @@ class MockSTTAdapter(STTAdapter):
             transcript_type=TranscriptType.FINAL,
             text=text,
             confidence=self._confidence,
-            duration_ms=len(text) * 60.0,  # rough approximation
+            duration_ms=duration_ms,
         )

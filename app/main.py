@@ -26,6 +26,7 @@ from .models import (
     Question,
 )
 from .voice.dialogue.fsm import QuestionContext
+from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
 from .voice.pipeline import VoicePipeline
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .schemas import (
@@ -61,7 +62,7 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 SCHEDULER_TICK_SECONDS = 5
-_scheduler_task: asyncio.Task | None = None
+_scheduler_task: asyncio.Task | None = None  # noqa: E501
 
 
 def _utcnow() -> datetime:
@@ -271,6 +272,11 @@ def index():
 @app.get("/voice")
 def voice_simulator():
     return FileResponse("app/static/voice.html")
+
+
+@app.get("/gallery")
+def gallery_page():
+    return FileResponse("app/static/gallery.html")
 
 
 @app.get("/api/health")
@@ -814,7 +820,13 @@ def list_call_attempts(campaign_id: int, limit: int = 30, db: Session = Depends(
 # In-memory session store (keyed by session_id).
 _voice_sessions: dict[str, dict] = {}
 
-_pipeline = VoicePipeline()
+# SAA-79/81: global mirroring settings (mutated in place by the settings endpoint)
+_mirroring_settings = MirroringSettings(
+    smoothing_alpha=0.60,    # high alpha: EMA reacts within 1-2 turns (was 0.30)
+    calibration_turns=1,     # lock baseline after first turn (was 2)
+    max_rate_delta=0.35,     # ±35% range → 0.65x–1.35x (was ±20%)
+)
+_pipeline = VoicePipeline(mirroring_settings=_mirroring_settings)
 
 # Wire session store into dashboard router so live-calls endpoint can read it.
 set_live_sessions_store(_voice_sessions)
@@ -827,7 +839,43 @@ class VoiceSessionStartRequest(BaseModel):
 
 class VoiceTurnRequest(BaseModel):
     transcript: str          # text from caller (or forwarded from STT adapter)
-    audio_duration_ms: float = 0.0
+    audio_duration_ms: float | None = 0.0       # None-safe: JS may send null on click events
+    mic_hesitation_count: int | None = 0        # pauses detected by Web Audio API silence analysis
+
+
+# SAA-80/81: Pydantic schema for mirroring settings
+class MirroringSettingsRequest(BaseModel):
+    enabled: bool = True
+    max_rate_delta: float = 0.35
+    max_pitch_semitones: float = 2.0
+    kill_switch_rapport_threshold: float = 0.50
+    smoothing_alpha: float = 0.60
+    calibration_turns: int = 1
+    baseline_drift_alpha: float = 0.04
+    rapport_rate_weight: bool = True
+
+
+_HESITATION_WORDS = frozenset(
+    {"um", "uh", "er", "hmm", "ah", "ehm", "like", "well", "אממ", "אה", "אהמ"}
+)
+
+
+def _estimate_mock_confidence(text: str) -> float:
+    """Derive a realistic STT confidence from the transcript text.
+
+    Clean, fluent answers → high confidence (~0.90–0.95).
+    Hesitation markers (um, uh, er …) → lower confidence (~0.55–0.75).
+    Very short / empty responses → floor at 0.55.
+    """
+    words = text.lower().split()
+    if not words:
+        return 0.55
+    hesitations = sum(1 for w in words if w.strip(".,!?;:") in _HESITATION_WORDS)
+    hesitation_rate = hesitations / len(words)
+    confidence = 0.93 - hesitation_rate * 0.45
+    if len(words) == 1:
+        confidence = min(confidence, 0.88)   # single-word answers are less certain
+    return round(max(0.48, min(0.97, confidence)), 3)
 
 
 def _load_question_contexts(campaign_id: int, db: Session) -> list[QuestionContext]:
@@ -945,14 +993,27 @@ async def process_voice_turn(
     async def _text_as_audio_chunks():
         yield payload.transcript.encode()
 
-    # Override mock STT to return the submitted transcript directly
+    # Override mock STT to return the submitted transcript directly.
+    # Confidence is estimated from the text so rapport actually varies:
+    # hesitation markers lower it, short/unclear answers drop it further.
+    # If the frontend measured real mic duration, derive ms_per_word from it so
+    # WPM reflects the caller's actual speaking pace.
     from .voice.stt.adapter import MockSTTAdapter
+    _words = payload.transcript.split()
+    _word_count = max(1, len(_words))
+    _dur = payload.audio_duration_ms or 0.0
+    _ms_per_word = _dur / _word_count if _dur > 0 else None
+
+    # STT mock returns the clean transcript — NLU and stored answers stay clean.
+    # Mic-detected hesitations are passed separately to process_turn for feature extraction only.
     _pipeline._stt = MockSTTAdapter(
         responses=[payload.transcript],
-        confidence=0.92,
+        confidence=_estimate_mock_confidence(payload.transcript),
+        ms_per_word=_ms_per_word,
     )
 
-    result = await _pipeline.process_turn(ctx, _text_as_audio_chunks())
+    _hesit_n = min(payload.mic_hesitation_count or 0, 6)
+    result = await _pipeline.process_turn(ctx, _text_as_audio_chunks(), hesitation_count=_hesit_n)
 
     session["tts_metrics"].append(result.tts_metrics)
     session["stt_metrics"].append(result.stt_metrics)
@@ -966,10 +1027,10 @@ async def process_voice_turn(
     if call_log:
         call_log.turns_count = len(ctx.history)
         call_log.answers = dict(ctx.answers)
-        # Rapport = avg turn confidence from history
+        # Rapport = avg STT confidence from caller_input events (logged by pipeline)
         confidences = [
             e["confidence"] for e in ctx.history
-            if e.get("event") == "turn" and "confidence" in e and e["confidence"] > 0
+            if e.get("event") == "caller_input" and isinstance(e.get("confidence"), float) and e["confidence"] > 0
         ]
         call_log.rapport_score = round(sum(confidences) / len(confidences), 2) if confidences else None
         if result.session_complete:
@@ -983,6 +1044,20 @@ async def process_voice_turn(
                 call_log.status = "completed"
         db.commit()
 
+    # SAA-78/82: include mirroring decision + monitoring flags in turn response
+    mirroring_resp = None
+    if result.mirroring_decision is not None:
+        md = result.mirroring_decision
+        mirroring_resp = {
+            **md.to_dict(),
+            "monitoring_flags": _pipeline._mirroring_policy.monitoring_flags(
+                ctx.mirroring_calibration,
+                _pipeline._compute_rapport(ctx),
+            ),
+            "calibration": ctx.mirroring_calibration.to_dict(),
+        }
+        session["last_mirroring"] = mirroring_resp
+
     return {
         "session_id": session_id,
         "response_text": result.response_text,
@@ -992,6 +1067,7 @@ async def process_voice_turn(
         "session_complete": result.session_complete,
         "stt_metrics": result.stt_metrics,
         "tts_metrics": result.tts_metrics,
+        "mirroring": mirroring_resp,
     }
 
 
@@ -1003,6 +1079,7 @@ def get_voice_session(campaign_id: int, session_id: str):
         raise HTTPException(status_code=404, detail="Voice session not found")
 
     ctx = session["ctx"]
+    rapport = _pipeline._compute_rapport(ctx)
     return {
         "session_id": session_id,
         "campaign_id": campaign_id,
@@ -1014,9 +1091,18 @@ def get_voice_session(campaign_id: int, session_id: str):
         "retry_count": ctx.retry_count,
         "started_at": session["started_at"],
         "completed_at": session.get("completed_at"),
+        "demo_running": session.get("demo_running", False),
         "tts_metrics_summary": session["tts_metrics"],
         "stt_metrics_summary": session["stt_metrics"],
         "history": ctx.history,
+        "mirroring": {
+            "calibration": ctx.mirroring_calibration.to_dict(),
+            "monitoring_flags": _pipeline._mirroring_policy.monitoring_flags(
+                ctx.mirroring_calibration, rapport
+            ),
+            "rapport": rapport,
+            **(session.get("last_mirroring") or {}),
+        },
     }
 
 
@@ -1038,6 +1124,40 @@ def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(g
 @app.get("/dashboard")
 def dashboard():
     return FileResponse("app/static/dashboard.html")
+
+
+# ===========================================================================
+# SAA-79/80/81: Voice Mirroring Settings
+# ===========================================================================
+
+@app.get("/api/mirroring/settings")
+def get_mirroring_settings():
+    """SAA-81: Return the current global voice mirroring settings."""
+    s = _mirroring_settings
+    return {
+        "enabled": s.enabled,
+        "max_rate_delta": s.max_rate_delta,
+        "max_pitch_semitones": s.max_pitch_semitones,
+        "kill_switch_rapport_threshold": s.kill_switch_rapport_threshold,
+        "smoothing_alpha": s.smoothing_alpha,
+        "calibration_turns": s.calibration_turns,
+        "baseline_drift_alpha": s.baseline_drift_alpha,
+        "rapport_rate_weight": s.rapport_rate_weight,
+    }
+
+
+@app.put("/api/mirroring/settings")
+def update_mirroring_settings(payload: MirroringSettingsRequest):
+    """SAA-81: Update global mirroring settings (applied to all new + running sessions)."""
+    _mirroring_settings.enabled = payload.enabled
+    _mirroring_settings.max_rate_delta = max(0.0, min(0.50, payload.max_rate_delta))
+    _mirroring_settings.max_pitch_semitones = max(0.0, min(6.0, payload.max_pitch_semitones))
+    _mirroring_settings.kill_switch_rapport_threshold = max(0.0, min(1.0, payload.kill_switch_rapport_threshold))
+    _mirroring_settings.smoothing_alpha = max(0.05, min(0.95, payload.smoothing_alpha))
+    _mirroring_settings.calibration_turns = max(1, min(10, payload.calibration_turns))
+    _mirroring_settings.baseline_drift_alpha = max(0.0, min(0.20, payload.baseline_drift_alpha))
+    _mirroring_settings.rapport_rate_weight = payload.rapport_rate_weight
+    return get_mirroring_settings()
 
 
 # ===========================================================================
@@ -1276,73 +1396,122 @@ def get_operator_queue() -> dict:
 _demo_run_tasks: dict[str, asyncio.Task] = {}
 
 
-def _mock_answer_for_question(question_type: str, config: dict, state: str, language: str = "en") -> str:
-    """Generate a realistic mock answer based on question type and current FSM state."""
+def _mock_answer_for_question(
+    question_type: str,
+    config: dict,
+    state: str,
+    language: str = "en",
+    hesitant: bool = False,
+) -> str:
+    """Generate a realistic mock answer. hesitant=True adds filler words."""
     import random
     hebrew = language.startswith("he")
     if "confirming" in state.lower():
-        return "כן" if hebrew else "yes"
+        return "כן, זה נכון" if hebrew else "yes that is correct"
+
     if question_type == "rating":
-        return str(random.randint(7, 10))
-    if question_type == "mcq":
-        choices = config.get("choices", [])
-        n = max(len(choices), 1)
         if hebrew:
-            return random.choice(["א", "ב", "ג", "ד"][:n])
-        return random.choice(["A", "B", "C", "D"][:n])
-    if hebrew:
-        responses = [
-            "כן, בהחלט", "השירות היה מצוין", "הכל היה בסדר גמור",
-            "אני מרוצה מאוד", "אין לי תלונות", "זה היה מועיל מאוד",
-            "חוויה נפלאה", "אמליץ בחום"
-        ]
-    else:
-        responses = [
-            "yes", "the service is great", "everything was fine",
-            "I am satisfied", "no complaints", "it was very helpful"
-        ]
-    return random.choice(responses)
+            fluent   = ["אני נותן שמונה", "הייתי אומר תשע", "אני מדרג שבע", "בעיניי תשע מתוך עשר"]
+            hesitant_ = ["אממ אני חושב שמונה בערך", "אה אולי שבע אני לא בטוח", "אממ כנראה תשע"]
+        else:
+            fluent   = ["I would rate it eight", "I would say nine out of ten", "I give it a seven", "definitely a nine"]
+            hesitant_ = ["um well maybe like eight I think", "uh probably around seven", "hmm I would say nine I guess"]
+    elif question_type == "mcq":
+        if hebrew:
+            fluent   = ["אני בוחר אפשרות א", "הייתי אומר ב", "התשובה שלי היא א"]
+            hesitant_ = ["אממ אני חושב אפשרות א", "אה אולי ב אני לא בטוח"]
+        else:
+            fluent   = ["I would choose option A", "I think option B is right", "my answer is A"]
+            hesitant_ = ["um well I think option A", "uh maybe B I am not sure"]
+    else:  # free_text
+        if hebrew:
+            fluent   = ["השירות היה מצוין לחלוטין", "הייתי מרוצה מאוד מהחוויה", "הכל עבד בסדר גמור"]
+            hesitant_ = ["אממ ובכן השירות היה בסדר אני חושב", "אה לא יודע אולי בסדר גמור"]
+        else:
+            fluent   = ["the service was excellent overall", "I was very satisfied with the experience", "everything worked out well"]
+            hesitant_ = ["um well the service was okay I think", "uh I am not really sure maybe it was good"]
+
+    return random.choice(hesitant_ if hesitant else fluent)
 
 
-async def _run_demo_session(session_id: str, campaign_id: int, interval: float = 7.0):
-    """Auto-advance a session by sending simulated answers until complete."""
-    await asyncio.sleep(2)  # brief pause before first auto-turn
-    for _ in range(60):     # safety cap
-        session = _voice_sessions.get(session_id)
-        if not session:
-            break
-        ctx = session.get("ctx")
-        if not ctx:
-            break
-        if session.get("completed_at"):
-            break
+async def _run_demo_session(session_id: str, campaign_id: int, interval: float = 2.0):
+    """Auto-advance a session by sending simulated answers until complete.
 
-        q = ctx.current_question
-        answer = _mock_answer_for_question(
-            q.question_type if q else "free_text",
-            q.config if q else {},
-            str(ctx.state),
-            language=getattr(ctx, "_language", "en") or "en",
-        )
+    Alternates between fluent and hesitant answers so mirroring has signal to work with.
+    """
+    from .voice.stt.adapter import MockSTTAdapter
 
-        from .voice.stt.adapter import MockSTTAdapter
-        _pipeline._stt = MockSTTAdapter(responses=[answer], confidence=0.92)
+    session = _voice_sessions.get(session_id)
+    if session:
+        session["demo_running"] = True
 
-        async def _chunks(text=answer):
-            yield text.encode()
-
-        try:
-            result = await _pipeline.process_turn(ctx, _chunks())
-            session["stt_metrics"].append(result.stt_metrics)
-            session["tts_metrics"].append(result.tts_metrics)
-            if result.session_complete:
-                session["completed_at"] = datetime.now(timezone.utc).isoformat()
-                session["answers"] = dict(ctx.answers)
+    await asyncio.sleep(1.0)  # brief pause before first auto-turn
+    turn_num = 0
+    try:
+        for _ in range(60):     # safety cap
+            session = _voice_sessions.get(session_id)
+            if not session:
                 break
-        except Exception:
-            break
+            ctx = session.get("ctx")
+            if not ctx:
+                break
+            if session.get("completed_at"):
+                break
 
-        await asyncio.sleep(interval)
+            q = ctx.current_question
+            # Phase 0 (turns 0-1): hesitant / slow — sets the calibration baseline at ~80 WPM
+            # Phase 1 (turns 2+): fluent / fast — speaking_rate rises to ~1.2× as mirroring kicks in
+            is_hesitant = turn_num < 2
+            answer = _mock_answer_for_question(
+                q.question_type if q else "free_text",
+                q.config if q else {},
+                str(ctx.state),
+                language=getattr(ctx, "_language", "en") or "en",
+                hesitant=is_hesitant,
+            )
+
+            # Hesitant: slow speech ~80 WPM (750ms/word)
+            # Fluent:   fast speech ~220 WPM (270ms/word)
+            ms_per_word = 750.0 if is_hesitant else 270.0
+
+            _pipeline._stt = MockSTTAdapter(
+                responses=[answer],
+                confidence=_estimate_mock_confidence(answer),
+                ms_per_word=ms_per_word,
+            )
+
+            async def _chunks(text=answer):
+                yield text.encode()
+
+            try:
+                result = await _pipeline.process_turn(ctx, _chunks())
+                session["stt_metrics"].append(result.stt_metrics)
+                session["tts_metrics"].append(result.tts_metrics)
+
+                if result.mirroring_decision is not None:
+                    md = result.mirroring_decision
+                    session["last_mirroring"] = {
+                        **md.to_dict(),
+                        "monitoring_flags": _pipeline._mirroring_policy.monitoring_flags(
+                            ctx.mirroring_calibration,
+                            _pipeline._compute_rapport(ctx),
+                        ),
+                        "calibration": ctx.mirroring_calibration.to_dict(),
+                    }
+
+                if result.session_complete:
+                    session["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    session["answers"] = dict(ctx.answers)
+                    break
+            except Exception:
+                break
+
+            turn_num += 1
+            await asyncio.sleep(interval)
+    finally:
+        session = _voice_sessions.get(session_id)
+        if session:
+            session["demo_running"] = False
 
 
 @app.post("/api/sessions/{session_id}/demo-run")

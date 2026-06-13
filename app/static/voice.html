@@ -50,6 +50,68 @@
       </div>
     </div>
 
+    <!-- SAA-80: Voice Mirroring Settings Panel -->
+    <div class="card" id="mirroring-panel" style="margin-top: 24px; padding: 20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="margin:0;font-size:16px;">🎙 Psycho-Adaptive Voice Mirroring</h3>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:13px;color:var(--text-muted);" id="mirroring-status-label">טוען...</span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="mirroring-enabled" onchange="saveMirroringSettings()" style="width:16px;height:16px;">
+            <span style="font-size:13px;font-weight:600;">הפעל שיקוף קולי</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="mirroring-controls" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">
+            מגבלת שינוי קצב דיבור (%) — <span id="rate-delta-val">20</span>%
+          </label>
+          <input type="range" id="max-rate-delta" min="0" max="50" value="20" step="1"
+            oninput="document.getElementById('rate-delta-val').textContent=this.value"
+            onchange="saveMirroringSettings()"
+            style="width:100%;accent-color:var(--primary);">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:2px;"><span>0%</span><span>50%</span></div>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">
+            מגבלת שינוי גובה טון (st) — <span id="pitch-val">2.0</span> semitones
+          </label>
+          <input type="range" id="max-pitch-semitones" min="0" max="6" value="2" step="0.5"
+            oninput="document.getElementById('pitch-val').textContent=this.value"
+            onchange="saveMirroringSettings()"
+            style="width:100%;accent-color:var(--primary);">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:2px;"><span>0</span><span>6 st</span></div>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">
+            סף כיבוי Rapport — <span id="threshold-val">50</span>%
+          </label>
+          <input type="range" id="kill-switch-threshold" min="10" max="80" value="50" step="5"
+            oninput="document.getElementById('threshold-val').textContent=this.value"
+            onchange="saveMirroringSettings()"
+            style="width:100%;accent-color:#dc2626;">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:2px;"><span>10%</span><span>80%</span></div>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">
+            מקדם החלקה EMA — <span id="alpha-val">30</span>%
+          </label>
+          <input type="range" id="smoothing-alpha" min="5" max="80" value="30" step="5"
+            oninput="document.getElementById('alpha-val').textContent=this.value"
+            onchange="saveMirroringSettings()"
+            style="width:100%;accent-color:var(--primary);">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:2px;"><span>5% (איטי)</span><span>80% (מהיר)</span></div>
+        </div>
+      </div>
+
+      <div id="mirroring-save-status" style="margin-top:12px;font-size:12px;color:#16a34a;display:none;">✓ ההגדרות נשמרו</div>
+    </div>
+
     <!-- Smart Priority Queue -->
     <div class="card" style="background-color: #fffbeb; border-color: #fde68a; margin-top: 24px; padding: 16px;" id="queue-section" style="display:none">
       <h3 style="color: #b45309; margin-bottom: 8px;">Smart Priority Queue - מעבר למוקדן אנושי ⚠️</h3>
@@ -231,6 +293,62 @@ async function resolveQueue(sessionId) {
 // Load on start and refresh every 5 seconds
 loadLiveCalls();
 setInterval(loadLiveCalls, 5000);
+
+// SAA-80/81: Mirroring settings load + save
+async function loadMirroringSettings() {
+  try {
+    const r = await fetch('/api/mirroring/settings');
+    if (!r.ok) return;
+    const s = await r.json();
+    document.getElementById('mirroring-enabled').checked = s.enabled;
+    document.getElementById('max-rate-delta').value = Math.round(s.max_rate_delta * 100);
+    document.getElementById('rate-delta-val').textContent = Math.round(s.max_rate_delta * 100);
+    document.getElementById('max-pitch-semitones').value = s.max_pitch_semitones;
+    document.getElementById('pitch-val').textContent = s.max_pitch_semitones;
+    document.getElementById('kill-switch-threshold').value = Math.round(s.kill_switch_rapport_threshold * 100);
+    document.getElementById('threshold-val').textContent = Math.round(s.kill_switch_rapport_threshold * 100);
+    document.getElementById('smoothing-alpha').value = Math.round(s.smoothing_alpha * 100);
+    document.getElementById('alpha-val').textContent = Math.round(s.smoothing_alpha * 100);
+    const label = document.getElementById('mirroring-status-label');
+    label.textContent = s.enabled ? 'שיקוף פעיל ✨' : 'שיקוף כבוי';
+    label.style.color = s.enabled ? '#16a34a' : '#94a3b8';
+  } catch(_) {}
+}
+
+let _mirroringSaveTimer = null;
+async function saveMirroringSettings() {
+  const enabled = document.getElementById('mirroring-enabled').checked;
+  const max_rate_delta = parseInt(document.getElementById('max-rate-delta').value) / 100;
+  const max_pitch_semitones = parseFloat(document.getElementById('max-pitch-semitones').value);
+  const kill_switch_rapport_threshold = parseInt(document.getElementById('kill-switch-threshold').value) / 100;
+  const smoothing_alpha = parseInt(document.getElementById('smoothing-alpha').value) / 100;
+
+  const label = document.getElementById('mirroring-status-label');
+  label.textContent = enabled ? 'שיקוף פעיל ✨' : 'שיקוף כבוי';
+  label.style.color = enabled ? '#16a34a' : '#94a3b8';
+
+  clearTimeout(_mirroringSaveTimer);
+  _mirroringSaveTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/mirroring/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          enabled, max_rate_delta, max_pitch_semitones,
+          kill_switch_rapport_threshold, smoothing_alpha,
+          calibration_turns: 2,
+        }),
+      });
+      if (r.ok) {
+        const el = document.getElementById('mirroring-save-status');
+        el.style.display = '';
+        setTimeout(() => { el.style.display = 'none'; }, 2000);
+      }
+    } catch(_) {}
+  }, 400);
+}
+
+loadMirroringSettings();
 
 // ── Transcript modal ──────────────────────────────────────────────────────
 let _transcriptPollTimer = null;
