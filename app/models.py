@@ -237,6 +237,10 @@ class CallLog(Base):
     structured_answers: Mapped[list["Answer"]] = relationship(
         "Answer", back_populates="call_log", cascade="all, delete-orphan"
     )
+    turns: Mapped[list["ConversationTurn"]] = relationship(
+        "ConversationTurn", back_populates="call_log", cascade="all, delete-orphan",
+        order_by="ConversationTurn.turn_index",
+    )
 
 
 class Interviewee(Base):
@@ -291,3 +295,91 @@ class Answer(Base):
     call_log: Mapped["CallLog"] = relationship("CallLog", back_populates="structured_answers")
     question: Mapped["Question"] = relationship("Question")
     interviewee: Mapped["Interviewee"] = relationship("Interviewee", back_populates="answers")
+
+
+class ConversationTurn(Base):
+    """SAA-114/115: One turn in a voice session — caller speech or bot response."""
+
+    __tablename__ = "conversation_turns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("call_logs.session_id"), index=True, nullable=False
+    )
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True, nullable=False)
+    turn_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    speaker: Mapped[str] = mapped_column(
+        Enum("bot", "caller", name="turn_speaker"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    stt_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dialogue_action: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    question_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    call_log: Mapped["CallLog"] = relationship("CallLog", back_populates="turns")
+
+
+class FreeTextLabel(Base):
+    """SAA-118: Taxonomy label for free-text normalization."""
+
+    __tablename__ = "free_text_labels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True, nullable=False)
+    question_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    keywords: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "question_key", "label", name="uq_label_per_question"),
+    )
+
+
+class AnswerLabel(Base):
+    """SAA-119/120: Mapping of a free-text Answer to a FreeTextLabel with confidence."""
+
+    __tablename__ = "answer_labels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    answer_id: Mapped[int] = mapped_column(ForeignKey("answers.id"), index=True, nullable=False)
+    label_id: Mapped[int] = mapped_column(ForeignKey("free_text_labels.id"), index=True, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    method: Mapped[str] = mapped_column(
+        Enum("keyword", "llm", "manual", name="label_method"), default="keyword", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    answer: Mapped["Answer"] = relationship("Answer")
+    label: Mapped["FreeTextLabel"] = relationship("FreeTextLabel")
+
+
+class DemographicWeight(Base):
+    """SAA-123/124: Weighting factor per demographic cell for bias correction."""
+
+    __tablename__ = "demographic_weights"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True, nullable=False)
+    demographic_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    demographic_value: Mapped[str] = mapped_column(String(128), nullable=False)
+    target_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    actual_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "demographic_key", "demographic_value",
+            name="uq_demographic_weight"
+        ),
+    )

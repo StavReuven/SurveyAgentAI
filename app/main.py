@@ -18,12 +18,16 @@ from sqlalchemy.orm import Session
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
     Answer,
+    AnswerLabel,
     BranchRule,
     CallLog,
     CallAttempt,
     CallingPolicy,
     Campaign,
     CampaignExecution,
+    ConversationTurn,
+    DemographicWeight,
+    FreeTextLabel,
     Interviewee,
     Participant,
     Question,
@@ -987,6 +991,30 @@ async def start_voice_session(
     }
 
 
+def _append_conversation_turn(
+    db: Session,
+    session_id: str,
+    campaign_id: int,
+    turn_index: int,
+    speaker: str,
+    text: str,
+    stt_confidence: float | None = None,
+    dialogue_action: str | None = None,
+    question_key: str | None = None,
+) -> None:
+    """SAA-115: Append one ConversationTurn row for the session transcript."""
+    db.add(ConversationTurn(
+        session_id=session_id,
+        campaign_id=campaign_id,
+        turn_index=turn_index,
+        speaker=speaker,
+        text=text,
+        stt_confidence=stt_confidence,
+        dialogue_action=dialogue_action,
+        question_key=question_key,
+    ))
+
+
 def _upsert_answer_rows(
     db: Session,
     session_id: str,
@@ -1098,6 +1126,30 @@ async def process_voice_turn(
                 call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
             else:
                 call_log.status = "completed"
+
+        # SAA-115: store caller speech and bot response as ConversationTurn rows
+        turn_count_before = db.query(ConversationTurn).filter(
+            ConversationTurn.session_id == session_id
+        ).count()
+        _append_conversation_turn(
+            db=db,
+            session_id=session_id,
+            campaign_id=campaign_id,
+            turn_index=turn_count_before,
+            speaker="caller",
+            text=payload.transcript,
+            stt_confidence=payload.confidence if hasattr(payload, "confidence") else None,
+            question_key=str(ctx.current_question_key) if hasattr(ctx, "current_question_key") else None,
+        )
+        _append_conversation_turn(
+            db=db,
+            session_id=session_id,
+            campaign_id=campaign_id,
+            turn_index=turn_count_before + 1,
+            speaker="bot",
+            text=result.response_text or "",
+            dialogue_action=str(result.dialogue_action) if result.dialogue_action else None,
+        )
 
         # DB-Enhancement: upsert structured Answer rows for analytics
         _upsert_answer_rows(
@@ -1599,6 +1651,272 @@ async def start_demo_run(
     task = asyncio.create_task(_run_demo_session(session_id, session["campaign_id"], interval=interval))
     _demo_run_tasks[session_id] = task
     return {"status": "started", "session_id": session_id}
+
+
+# ── SAA-116: Transcript retrieval API ─────────────────────────────────────────
+
+@app.get("/api/campaigns/{campaign_id}/voice/sessions/{session_id}/transcript")
+def get_session_transcript(
+    campaign_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return the full ordered turn-by-turn transcript for a session."""
+    turns = (
+        db.query(ConversationTurn)
+        .filter(
+            ConversationTurn.session_id == session_id,
+            ConversationTurn.campaign_id == campaign_id,
+        )
+        .order_by(ConversationTurn.turn_index)
+        .all()
+    )
+    return {
+        "session_id": session_id,
+        "campaign_id": campaign_id,
+        "turns": [
+            {
+                "turn_index": t.turn_index,
+                "speaker": t.speaker,
+                "text": t.text,
+                "stt_confidence": t.stt_confidence,
+                "dialogue_action": t.dialogue_action,
+                "question_key": t.question_key,
+                "created_at": t.created_at.isoformat(),
+            }
+            for t in turns
+        ],
+    }
+
+
+# ── SAA-127/129: Export campaign results ──────────────────────────────────────
+
+@app.get("/api/campaigns/{campaign_id}/export")
+def export_campaign_results(
+    campaign_id: int,
+    format: str = "json",
+    db: Session = Depends(get_db),
+):
+    """SAA-127: Export all answers for a campaign as JSON or CSV."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    answers = (
+        db.query(Answer)
+        .filter(Answer.campaign_id == campaign_id)
+        .order_by(Answer.session_id, Answer.id)
+        .all()
+    )
+
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["session_id", "question_key", "answer_type", "raw_text", "normalized_value", "created_at"])
+        for a in answers:
+            writer.writerow([
+                a.session_id,
+                a.question_key,
+                a.answer_type,
+                a.raw_text,
+                a.normalized_value,
+                a.created_at.isoformat() if a.created_at else "",
+            ])
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=campaign_{campaign_id}_results.csv"},
+        )
+
+    # JSON format
+    rows = [
+        {
+            "session_id": a.session_id,
+            "question_key": a.question_key,
+            "answer_type": a.answer_type,
+            "raw_text": a.raw_text,
+            "normalized_value": a.normalized_value,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in answers
+    ]
+    return {"campaign_id": campaign_id, "total": len(rows), "answers": rows}
+
+
+# ── SAA-114/127: Analytics summary ────────────────────────────────────────────
+
+@app.get("/api/campaigns/{campaign_id}/analytics/summary")
+def get_analytics_summary(campaign_id: int, db: Session = Depends(get_db)):
+    """Return per-question answer distribution for charts."""
+    from sqlalchemy import func
+
+    questions = db.query(Question).filter(Question.campaign_id == campaign_id).order_by(Question.order_index).all()
+    total_sessions = db.query(func.count(func.distinct(Answer.session_id))).filter(
+        Answer.campaign_id == campaign_id
+    ).scalar() or 0
+
+    result = {"campaign_id": campaign_id, "total_sessions": total_sessions, "questions": []}
+
+    for q in questions:
+        rows = (
+            db.query(Answer.normalized_value, func.count(Answer.id).label("cnt"))
+            .filter(Answer.campaign_id == campaign_id, Answer.question_key == q.key)
+            .group_by(Answer.normalized_value)
+            .all()
+        )
+        total_for_q = sum(r.cnt for r in rows)
+        distribution = [
+            {
+                "label": r.normalized_value or "(empty)",
+                "count": r.cnt,
+                "percent": round(r.cnt / total_for_q * 100, 1) if total_for_q else 0,
+            }
+            for r in sorted(rows, key=lambda x: -x.cnt)
+        ]
+        result["questions"].append({
+            "key": q.key,
+            "prompt": q.prompt,
+            "question_type": q.question_type,
+            "total_answers": total_for_q,
+            "distribution": distribution,
+        })
+
+    return result
+
+
+# ── SAA-123/124/125: Bias correction weights ──────────────────────────────────
+
+@app.get("/api/campaigns/{campaign_id}/weights")
+def get_demographic_weights(campaign_id: int, db: Session = Depends(get_db)):
+    """Return current demographic weights for this campaign."""
+    weights = db.query(DemographicWeight).filter(DemographicWeight.campaign_id == campaign_id).all()
+    return {
+        "campaign_id": campaign_id,
+        "weights": [
+            {
+                "demographic_key": w.demographic_key,
+                "demographic_value": w.demographic_value,
+                "target_percent": w.target_percent,
+                "actual_percent": w.actual_percent,
+                "weight": w.weight,
+            }
+            for w in weights
+        ],
+    }
+
+
+@app.put("/api/campaigns/{campaign_id}/weights")
+def upsert_demographic_weight(
+    campaign_id: int,
+    demographic_key: str,
+    demographic_value: str,
+    target_percent: float,
+    db: Session = Depends(get_db),
+):
+    """SAA-124: Set a target demographic percentage for bias correction."""
+    row = (
+        db.query(DemographicWeight)
+        .filter(
+            DemographicWeight.campaign_id == campaign_id,
+            DemographicWeight.demographic_key == demographic_key,
+            DemographicWeight.demographic_value == demographic_value,
+        )
+        .first()
+    )
+    if row:
+        row.target_percent = target_percent
+    else:
+        row = DemographicWeight(
+            campaign_id=campaign_id,
+            demographic_key=demographic_key,
+            demographic_value=demographic_value,
+            target_percent=target_percent,
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"weight": row.weight, "target_percent": row.target_percent}
+
+
+# ── SAA-118/119/120: Free-text label taxonomy ─────────────────────────────────
+
+@app.get("/api/campaigns/{campaign_id}/labels")
+def get_free_text_labels(campaign_id: int, question_key: str = None, db: Session = Depends(get_db)):
+    """Return taxonomy labels for free-text normalization."""
+    q = db.query(FreeTextLabel).filter(FreeTextLabel.campaign_id == campaign_id)
+    if question_key:
+        q = q.filter(FreeTextLabel.question_key == question_key)
+    labels = q.all()
+    return {
+        "campaign_id": campaign_id,
+        "labels": [
+            {"id": l.id, "question_key": l.question_key, "label": l.label, "keywords": l.keywords}
+            for l in labels
+        ],
+    }
+
+
+@app.post("/api/campaigns/{campaign_id}/labels")
+def create_free_text_label(
+    campaign_id: int,
+    question_key: str,
+    label: str,
+    keywords: list[str] = None,
+    db: Session = Depends(get_db),
+):
+    """SAA-118: Add a taxonomy label with keywords for a free-text question."""
+    row = FreeTextLabel(
+        campaign_id=campaign_id,
+        question_key=question_key,
+        label=label,
+        keywords=keywords or [],
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "label": row.label, "keywords": row.keywords}
+
+
+@app.post("/api/campaigns/{campaign_id}/labels/apply")
+def apply_labels_to_answers(campaign_id: int, question_key: str, db: Session = Depends(get_db)):
+    """SAA-119/120: Run keyword-matching pipeline to label free-text answers."""
+    labels = (
+        db.query(FreeTextLabel)
+        .filter(FreeTextLabel.campaign_id == campaign_id, FreeTextLabel.question_key == question_key)
+        .all()
+    )
+    answers = (
+        db.query(Answer)
+        .filter(Answer.campaign_id == campaign_id, Answer.question_key == question_key, Answer.answer_type == "free_text")
+        .all()
+    )
+
+    created = 0
+    for answer in answers:
+        text_lower = (answer.raw_text or "").lower()
+        for lbl in labels:
+            keywords = [k.lower() for k in (lbl.keywords or [])]
+            if any(kw in text_lower for kw in keywords):
+                exists = db.query(AnswerLabel).filter(
+                    AnswerLabel.answer_id == answer.id,
+                    AnswerLabel.label_id == lbl.id,
+                ).first()
+                if not exists:
+                    confidence = max(
+                        sum(1 for kw in keywords if kw in text_lower) / max(len(keywords), 1),
+                        0.5,
+                    )
+                    db.add(AnswerLabel(
+                        answer_id=answer.id,
+                        label_id=lbl.id,
+                        confidence=round(confidence, 2),
+                        method="keyword",
+                    ))
+                    created += 1
+
+    db.commit()
+    return {"labeled": created, "answers_processed": len(answers)}
 
 
 @app.delete("/api/operator-queue/{session_id}")
