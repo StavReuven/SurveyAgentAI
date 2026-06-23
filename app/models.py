@@ -234,3 +234,60 @@ class CallLog(Base):
     rapport_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     campaign: Mapped["Campaign"] = relationship("Campaign")
+    structured_answers: Mapped[list["Answer"]] = relationship(
+        "Answer", back_populates="call_log", cascade="all, delete-orphan"
+    )
+
+
+class Interviewee(Base):
+    """Persistent person profile identified by phone number — survives across campaigns."""
+
+    __tablename__ = "interviewees"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    phone_number: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    demographics: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    answers: Mapped[list["Answer"]] = relationship("Answer", back_populates="interviewee")
+
+
+class Answer(Base):
+    """One structured answer per question per session — enables analytics queries."""
+
+    __tablename__ = "answers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("call_logs.session_id"), index=True, nullable=False
+    )
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True, nullable=False)
+    question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("questions.id"), nullable=True, index=True
+    )
+    interviewee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("interviewees.id"), nullable=True, index=True
+    )
+    question_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_value: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    answer_type: Mapped[str] = mapped_column(
+        Enum("rating", "mcq", "free_text", "unknown", name="answer_type"),
+        default="unknown",
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    call_log: Mapped["CallLog"] = relationship("CallLog", back_populates="structured_answers")
+    question: Mapped["Question"] = relationship("Question")
+    interviewee: Mapped["Interviewee"] = relationship("Interviewee", back_populates="answers")

@@ -17,12 +17,14 @@ from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
+    Answer,
     BranchRule,
     CallLog,
     CallAttempt,
     CallingPolicy,
     Campaign,
     CampaignExecution,
+    Interviewee,
     Participant,
     Question,
 )
@@ -30,6 +32,7 @@ from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
 from .voice.pipeline import VoicePipeline
+from .analytics.router import router as analytics_router
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .telephony.router import router as telephony_router
 from .telephony.session_store import get_store as get_telephony_store
@@ -77,6 +80,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0", lifespan=lifespan)
+app.include_router(analytics_router)
 app.include_router(dashboard_router)
 app.include_router(telephony_router)
 app.add_middleware(
@@ -983,6 +987,48 @@ async def start_voice_session(
     }
 
 
+def _upsert_answer_rows(
+    db: Session,
+    session_id: str,
+    campaign_id: int,
+    answers: dict,
+    questions: list,
+    interviewee_id: int | None,
+) -> None:
+    """Write one Answer row per question key — upsert by (session_id, question_key)."""
+    q_map = {q.question_key: q for q in questions}
+    existing = {
+        a.question_key: a
+        for a in db.query(Answer).filter(Answer.session_id == session_id).all()
+    }
+    for key, raw_text in answers.items():
+        q_ctx = q_map.get(key)
+        answer_type = q_ctx.question_type if q_ctx else "unknown"
+        question_id = q_ctx.question_id if q_ctx else None
+
+        # Normalize: strip whitespace, lower for non-free-text
+        normalized = raw_text.strip()
+        if answer_type in ("rating", "mcq"):
+            normalized = normalized.lower()
+
+        if key in existing:
+            row = existing[key]
+            row.raw_text = raw_text
+            row.normalized_value = normalized
+        else:
+            row = Answer(
+                session_id=session_id,
+                campaign_id=campaign_id,
+                question_id=question_id,
+                interviewee_id=interviewee_id,
+                question_key=key,
+                raw_text=raw_text,
+                normalized_value=normalized,
+                answer_type=answer_type,
+            )
+            db.add(row)
+
+
 @app.post("/api/campaigns/{campaign_id}/voice/sessions/{session_id}/turn")
 async def process_voice_turn(
     campaign_id: int,
@@ -1052,6 +1098,16 @@ async def process_voice_turn(
                 call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
             else:
                 call_log.status = "completed"
+
+        # DB-Enhancement: upsert structured Answer rows for analytics
+        _upsert_answer_rows(
+            db=db,
+            session_id=session_id,
+            campaign_id=campaign_id,
+            answers=dict(ctx.answers),
+            questions=ctx.questions,
+            interviewee_id=None,  # Interviewee lookup added in next phase
+        )
         db.commit()
 
     # SAA-78/82: include mirroring decision + monitoring flags in turn response
