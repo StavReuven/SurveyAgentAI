@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from time import time
 from typing import AsyncIterator
 
+from .agent.service import AgentAIService
 from .dialogue.fallbacks import FallbackConfig
 from .dialogue.fsm import DialogueAction, FSMContext, QuestionContext
 from .dialogue.transitions import DialogueManager
@@ -34,6 +35,7 @@ class TurnResult:
     tts_metrics: dict
     session_complete: bool
     mirroring_decision: MirroringDecision | None = None   # SAA-74
+    agent_decision: dict | None = None                    # AgentAI structured output
 
 
 @dataclass
@@ -59,6 +61,7 @@ class VoicePipeline:
         tts_adapter: TTSAdapter | None = None,
         config: PipelineConfig | None = None,
         mirroring_settings: MirroringSettings | None = None,
+        agent_service: AgentAIService | None = None,
     ) -> None:
         self._config = config or PipelineConfig()
         self._stt: STTAdapter = stt_adapter or MockSTTAdapter(config=self._config.stt_config)
@@ -68,6 +71,7 @@ class VoicePipeline:
         self._voice_selector = VoiceSelector()
         self._feature_extractor = FeatureExtractor()
         self._mirroring_policy = MirroringPolicy(mirroring_settings)
+        self._agent: AgentAIService | None = agent_service
 
     # -----------------------------------------------------------------------
     # Session lifecycle
@@ -134,17 +138,46 @@ class VoicePipeline:
             stt_m.record_final(final_text)
         stt_m.audio_duration_ms = duration_ms
 
-        # --- NLU ---
+        # --- NLU / AgentAI ---
         q = ctx.current_question
         question_type = q.question_type if q else None
-        nlu_result = self._nlu.classify(final_text, question_type=question_type)
-        intent = nlu_result.primary
+        language = getattr(ctx, "_language", "en") or "en"
+        next_q = self._peek_next_question(ctx)
+
+        agent_decision = None
+        if self._agent:
+            agent_decision = await self._agent.analyze_response(
+                transcript=final_text,
+                question=q,
+                history=ctx.history,
+                language=language,
+                next_question=next_q,
+            )
+            intent = agent_decision.to_nlu_intent()
+        else:
+            nlu_result = self._nlu.classify(final_text, question_type=question_type)
+            intent = nlu_result.primary
 
         # Log caller transcript (include confidence for rapport + mirroring)
         ctx.log("caller_input", text=final_text, confidence=confidence)
 
         # --- Dialogue ---
         ctx, action, response_text = self._dm.process(ctx, intent)
+
+        # Response text merging:
+        # - SPEAK_QUESTION + agent has a full transition → use agent text only
+        #   (agent already acknowledged the answer AND introduced the next question)
+        # - SPEAK_QUESTION + agent only has short ack → prepend to FSM question text
+        # - Any other action → use agent text (errors, clarification, opt-out, etc.)
+        if agent_decision and agent_decision.response_text:
+            if action == DialogueAction.SPEAK_QUESTION:
+                # If agent built a full transition (includes next question intro), skip FSM text
+                if next_q and len(agent_decision.response_text) > 40:
+                    response_text = agent_decision.response_text
+                else:
+                    response_text = f"{agent_decision.response_text} {response_text}"
+            else:
+                response_text = agent_decision.response_text
         ctx.log("bot_response", action=str(action), text=response_text)
 
         # --- SAA-70: Feature extraction + calibration ---
@@ -191,11 +224,24 @@ class VoicePipeline:
             tts_metrics=tts_m.to_dict(),
             session_complete=session_complete,
             mirroring_decision=mirroring,
+            agent_decision=agent_decision.to_dict() if agent_decision else None,
         )
 
     # -----------------------------------------------------------------------
     # Internal helpers
     # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _peek_next_question(ctx: FSMContext) -> QuestionContext | None:
+        """Return the question after the current one without advancing the FSM."""
+        questions = ctx.questions
+        current = ctx.current_question
+        if not current or not questions:
+            return None
+        for i, q in enumerate(questions):
+            if q.question_key == current.question_key:
+                return questions[i + 1] if i + 1 < len(questions) else None
+        return None
 
     def _compute_rapport(self, ctx: FSMContext) -> float:
         """Average STT confidence across all caller turns in this session."""
