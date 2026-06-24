@@ -11,13 +11,33 @@ from .schema import AgentDecision, AgentIntent, ExtractedAnswer, NextAction
 if TYPE_CHECKING:
     from app.voice.dialogue.fsm import QuestionContext
 
-# ── varied acknowledgements ───────────────────────────────────────────────────
-_ACKS_EN = [
-    "Got it.", "Thanks for that.", "Noted.", "Appreciate it.",
-    "Understood.", "Great, thank you.", "Perfect.",
+# ── emotionally varied acknowledgements ──────────────────────────────────────
+# High score / YES / positive
+_ACKS_HIGH_EN = [
+    "That's great to hear!", "Wonderful, really!", "Oh, love that!",
+    "Excellent — so happy to hear that!", "Brilliant, thank you!",
+    "That's really good to know!", "Awesome!", "That's fantastic!",
 ]
-_ACKS_HE = [
-    "תודה.", "מצוין.", "הבנתי.", "טוב מאוד.", "מעולה.", "יפה.",
+_ACKS_HIGH_HE = [
+    "מצוין, שמח לשמוע!", "נהדר!", "זה ממש טוב לשמוע!", "כל הכבוד!",
+    "מעולה, תודה!", "זה מרגש לשמוע, תודה רבה!", "מדהים!",
+]
+# Low score / NO / negative
+_ACKS_LOW_EN = [
+    "I'm sorry to hear that.", "Oh, that's below what we'd hope for — thank you for being honest.",
+    "I understand, and I appreciate your candour.", "That's really useful to know.",
+    "Thanks for being so direct — that kind of feedback really helps.",
+]
+_ACKS_LOW_HE = [
+    "מצטער לשמוע.", "תודה על הכנות — זה מידע חשוב מאוד.", "מבין, ומעריך את הכנות שלך.",
+    "זה חשוב שאמרת — תודה.", "לא מה שהיינו רוצים לשמוע, אבל חשוב לדעת.",
+]
+# Neutral / mid
+_ACKS_MID_EN = [
+    "Got it.", "Fair enough.", "I hear you.", "Makes sense.", "Noted.", "Appreciate it.",
+]
+_ACKS_MID_HE = [
+    "הבנתי.", "בסדר.", "מבין.", "יפה.", "תודה.", "מעריך את זה.",
 ]
 
 # ── varied terminal responses (Peak-End Rule) ─────────────────────────────────
@@ -95,28 +115,92 @@ _NOT_NOW = re.compile(
 )
 _REPEAT = re.compile(
     r"\b(repeat|say (that )?again|what did you say|didn'?t hear|didn'?t catch"
-    r"|come again|pardon|what\??|could you repeat|once more)\b",
-    re.I,
+    r"|come again|pardon|could you repeat|once more)\b"
+    r"|^\s*what[?!]?\s*$",   # standalone "what" / "what?" only — not mid-sentence
+    re.I | re.MULTILINE,
 )
 _REPHRASE = re.compile(
     r"\b(rephrase|different(ly)?|explain|don'?t understand|not sure what you mean"
-    r"|clarify|what do you mean|can you explain|elaborate|i'?m confused)\b",
+    r"|clarify|what do you mean|can you explain|elaborate|i'?m confused"
+    r"|remind me|remember me|what are (the |my )?(options|choices|channels|alternatives)"
+    r"|what were (the )?(options|choices)|list (the |my )?(options|choices)"
+    r"|מה האפשרויות|תזכיר לי|מה הבחירות)\b",
     re.I,
 )
 _ESCALATE = re.compile(
     r"\b("
-    r"speak to (a )?(human|person|agent|representative)|transfer|manager"
+    # explicit human-transfer requests (English)
+    r"speak (to|with) (a )?(human|person|agent|representative|supervisor|manager)"
+    r"|talk (to|with) (a )?(human|person|agent|representative|supervisor|manager)"
+    r"|connect me (to|with) (a )?(human|person|agent|representative|supervisor|manager)"
+    r"|let me (speak|talk) (to|with) (a )?(human|person|supervisor|manager|real person)"
+    r"|get me (a |your )?(supervisor|manager|human|person)"
+    r"|i want (a |to (speak|talk) (to|with) a )?(supervisor|manager|human|real person)"
+    r"|transfer( me)?( to)?"
+    r"|supervisor|escalate"
+    # anger patterns (English)
     r"|i'?m (angry|furious|livid)|this is (ridiculous|outrageous|unacceptable)"
     r"|stop wasting my time|waste of (my )?time|this is pointless"
     r"|you'?re (useless|terrible|awful|a robot)"
     r"|i hate this|terrible (service|experience)"
+    # human-transfer requests (Hebrew)
+    r"|תעביר אותי (למנהל|לנציג|לבן אדם|לאדם אמיתי)"
+    r"|רוצה לדבר (עם מנהל|עם נציג|עם בן אדם|עם ממונה)"
+    r"|אני רוצה (מנהל|נציג|בן אדם|ממונה)"
+    r"|תחבר אותי (למנהל|לנציג|לבן אדם)"
+    r"|דבר (עם )?מנהל|מנהל בבקשה|ממונה בבקשה"
+    r"|תן לי (לדבר עם )?(מנהל|נציג|בן אדם|ממונה)"
+    r"|העבר אותי|רוצה להעביר"
     r")\b",
     re.I,
+)
+_ESCALATE_MANAGER_RE = re.compile(
+    r"\b(supervisor|manager)\b|ממונה|מנהל", re.I
 )
 _PROFANITY = re.compile(
     r"\b(fuck|shit|bitch|asshole|bastard|damn it|crap|dick|pussy|motherfucker"
     r"|wtf|go to hell|screw you|idiot|moron|stupid (bot|survey|call)"
     r"|כסח|לך תזדיין|בן זונה|מה הבאסה|זיין|שמות גידוף)\b",
+    re.I,
+)
+_CONVERSATIONAL = re.compile(
+    r"\b(what'?s? (?:is )?your name|what do (i|we|you) call you"
+    r"|who are you|what are you"
+    r"|are you (a )?(real( person)?|human|person|bot|ai|robot|machine|computer|virtual)"
+    r"|am i (talking|speaking) to (a )?(human|real person|bot|ai|robot|machine|computer)"
+    r"|are you (an? )?(artificial intelligence|ai|language model|llm|automated)"
+    r"|you'?re? (a )?(bot|robot|ai|machine|computer|not (real|human))"
+    r"|how are you( doing| today)?|how'?re you"
+    r"|what (do you|would you) (think|recommend|suggest|say|prefer|pick|choose)"
+    r"|what(?:'s?| is) (the )?(best|your favorite|your (pick|choice|preference|opinion|recommendation))"
+    r"|what (is|are) (the )?(best( option)?|better option|right (option|choice|answer))"
+    r"|which (is|would be) (the )?(best|better|your (pick|choice|preference))"
+    r"|what is (the )?(recommendation|your recommendation|your opinion|your view)"
+    r"|מה שמך|מי אתה|מה אתה"
+    r"|אתה (בוט|AI|מחשב|רובוט|אנושי|בן אדם|אמיתי|וירטואלי|אוטומטי)"
+    r"|אני מדבר עם (מחשב|בוט|בן אדם|אוטומציה)"
+    r"|זה (בוט|AI|מחשב|רובוט|אנושי)"
+    r"|מה (הכי טוב|לדעתך|אתה ממליץ|תמליץ|היית בוחר))\b",
+    re.I,
+)
+_NAME_RE = re.compile(
+    r"\bwhat'?s? (?:is )?your name\b|מה שמך|איך קוראים לך", re.I
+)
+_ARE_YOU_AI_RE = re.compile(
+    r"\bare you (a )?(bot|ai|robot|machine|computer|virtual|automated|not (a |real )?human)\b"
+    r"|\bam i (talking|speaking) to (a )?(bot|ai|robot|machine|computer)\b"
+    r"|\byou'?re? (a )?(bot|robot|ai|machine|computer)\b"
+    r"|אתה (בוט|AI|מחשב|רובוט|וירטואלי|אוטומטי)\b"
+    r"|זה (בוט|AI|מחשב|רובוט)\b",
+    re.I,
+)
+_OPINION_RE = re.compile(
+    r"\b(what (do you|would you) (think|recommend|suggest|say|prefer|pick|choose)"
+    r"|what(?:'s?| is) (the )?(best|your (pick|choice|preference|opinion|recommendation))"
+    r"|what (is|are) (the )?(best( option)?|better option|right (option|choice|answer))"
+    r"|which (is|would be) (the )?(best|better|your (pick|choice|preference))"
+    r"|what is (the )?(recommendation|your recommendation|your opinion|your view)"
+    r"|מה (הכי טוב|לדעתך|אתה ממליץ|תמליץ|היית בוחר))\b",
     re.I,
 )
 
@@ -127,23 +211,49 @@ _TIME_PATTERN  = re.compile(r"\b\d{1,2}:\d{2}\b")
 _DIGIT_PATTERN = re.compile(r"(?<!\d)(?<!\d:)\b(10|[1-9])\b(?!:\d)")
 
 _RATING_WORDS: dict[str, int] = {
+    # English cardinal numbers
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    # sentiment → approximate rating
-    "terrible": 1, "awful": 1, "horrible": 1,
-    "bad": 2, "poor": 2, "disappointing": 2,
-    "okay": 3, "ok": 3, "average": 3, "fine": 3, "alright": 3, "mediocre": 3,
-    "good": 4, "nice": 4, "well": 4, "great": 4, "pretty good": 4,
-    "excellent": 5, "perfect": 5, "amazing": 5, "wonderful": 5,
-    "outstanding": 5, "fantastic": 5, "superb": 5,
+    # English sentiment mapped to 1-10 scale
+    "terrible": 1, "awful": 1, "horrible": 1, "dreadful": 1,
+    "bad": 2, "poor": 2, "disappointing": 2, "very bad": 2,
+    "okay": 4, "ok": 4, "average": 5, "fine": 5, "alright": 5, "mediocre": 4, "so so": 4,
+    "decent": 6, "not bad": 6, "fairly good": 6,
+    "good": 7, "nice": 7, "well": 7, "pretty good": 7,
+    "very good": 8, "great": 8, "quite good": 8,
+    "excellent": 9, "wonderful": 9, "fantastic": 9, "brilliant": 9,
+    "perfect": 10, "amazing": 10, "outstanding": 10, "superb": 10, "exceptional": 10,
+    # Hebrew cardinal numbers (1–10)
+    "אחד": 1, "אחת": 1,
+    "שניים": 2, "שתיים": 2, "שתים": 2,
+    "שלושה": 3, "שלוש": 3,
+    "ארבעה": 4, "ארבע": 4,
+    "חמישה": 5, "חמש": 5,
+    "שישה": 6, "שש": 6,
+    "שבעה": 7, "שבע": 7,
+    "שמונה": 8,
+    "תשעה": 9, "תשע": 9,
+    "עשרה": 10, "עשר": 10,
+    # Hebrew sentiment → approximate rating
+    "נורא": 1, "גרוע": 1, "איום": 1,
+    "רע": 2, "גרוע מאוד": 2,
+    "בסדר": 3, "ממוצע": 3, "סביר": 3,
+    "טוב": 4, "יפה": 4, "נחמד": 4,
+    "מצוין": 5, "מעולה": 5, "מדהים": 5, "נהדר": 5, "פנטסטי": 5,
 }
 _YES = re.compile(
     r"\b(yes|yeah|yep|yup|sure|absolutely|correct|that'?s right|affirmative"
-    r"|of course|definitely|certainly|indeed)\b",
+    r"|of course|definitely|certainly|indeed|i would|i'?d say yes|i think so"
+    r"|i believe so|i suppose so|most likely|probably yes|i'?d recommend"
+    r"|would recommend|i'?m happy to|glad to|i'?d be happy"
+    r"|כן|בטח|בוודאי|נכון|אכן|בדיוק|כמובן|ודאי|הייתי ממליץ|אמליץ)\b",
     re.I,
 )
 _NO = re.compile(
-    r"\b(no|nope|nah|not really|negative|incorrect|wrong|never|not at all)\b",
+    r"\b(no|nope|nah|not really|negative|incorrect|wrong|never|not at all"
+    r"|i wouldn'?t|i don'?t think so|i don'?t believe so|probably not"
+    r"|wouldn'?t recommend|i'?d rather not|i'?m not sure i would"
+    r"|לא|ממש לא|בשום אופן|לא הייתי ממליץ|לא בטוח)\b",
     re.I,
 )
 _MCQ_LETTER   = re.compile(r"\b([a-dA-D])\b")
@@ -173,6 +283,36 @@ class RuleBasedFallback:
         lower = text.lower()
         q_type = question.question_type if question else "free_text"
         he = language.startswith("he")
+        options: list[str] = (question.config or {}).get("options", []) if question else []
+
+        # ── system resume signal (operator handed back to agent) ─────────────
+        if lower.strip() == '[resume]':
+            return AgentDecision(
+                intent=AgentIntent.REPEAT_QUESTION,
+                confidence=1.0,
+                next_action=NextAction.REPEAT,
+                response_text="",   # FSM will speak the current question
+                should_save_answer=False,
+                reason="operator returned control; re-ask current question",
+            )
+
+        # ── early answer extraction (before intent patterns) ─────────────────
+        # For structured question types (rating/yes_no/mcq/numeric), if there is
+        # a clear extractable answer we accept it immediately, even if the utterance
+        # also contains a conversational phrase or stray "what" that would otherwise
+        # trigger REPEAT/CONVERSATIONAL incorrectly.
+        if q_type not in ("free_text",):
+            _early_answer = self._extract(lower, text, q_type, options)
+            if _early_answer:
+                ack = self._pick_ack(_early_answer, q_type, he)
+                return AgentDecision(
+                    intent=AgentIntent.ANSWER,
+                    confidence=0.80,
+                    next_action=NextAction.CONTINUE,
+                    response_text=self._build_transition(ack, next_question, he),
+                    should_save_answer=True,
+                    extracted_answer=_early_answer,
+                )
 
         # ── high-priority meta-intents ────────────────────────────────────────
         if _PROFANITY.search(lower):
@@ -189,15 +329,26 @@ class RuleBasedFallback:
             )
 
         if _ESCALATE.search(lower):
+            wants_manager = bool(_ESCALATE_MANAGER_RE.search(lower))
+            if he:
+                resp = (
+                    "בסדר, אני מעביר אותך למנהל עכשיו. רגע בבקשה."
+                    if wants_manager
+                    else "אני מעביר אותך לנציג אנושי עכשיו. רגע בבקשה."
+                )
+            else:
+                resp = (
+                    "Of course — let me connect you to a manager right now. Please hold for a moment."
+                    if wants_manager
+                    else "Sure — I'm connecting you to a human agent now. Please hold for a moment."
+                )
             return AgentDecision(
                 intent=AgentIntent.ESCALATE,
                 confidence=0.90,
                 next_action=NextAction.ESCALATE,
-                response_text=(
-                    "אני מעביר אותך לנציג אנושי. רגע בבקשה." if he
-                    else "I'm transferring you to a human agent now. Please hold."
-                ),
+                response_text=resp,
                 should_save_answer=False,
+                reason="caller requested human/manager",
             )
 
         if _OPT_OUT.search(lower):
@@ -218,6 +369,35 @@ class RuleBasedFallback:
                 should_save_answer=False,
             )
 
+        if _CONVERSATIONAL.search(lower):
+            restate = f" {question.prompt}" if question else ""
+            if _NAME_RE.search(lower):
+                resp_en = f"I'm Alex! Nice to meet you. Now, back to the survey —{restate}"
+                resp_he = f"שמי אלכס! נעים להכיר. ממשיך —{restate}"
+            elif _ARE_YOU_AI_RE.search(lower):
+                resp_en = f"Ha, no — just a real person doing calls for a market research project! Anyway,{restate}"
+                resp_he = f"לא, אני בן אדם אמיתי, מבצע שיחות עבור מחקר שוק! בכל מקרה,{restate}"
+            elif _OPINION_RE.search(lower):
+                # User asks what the agent thinks / recommends — can't take sides
+                if q_type == "mcq" and options:
+                    opts_str = ", ".join(options[:4])
+                    resp_en = f"Ha, I really shouldn't sway you! Every option has its merits. The choices are: {opts_str} — which fits you best?"
+                    resp_he = f"אני לא רוצה להשפיע! לכל אפשרות יש יתרונות. האפשרויות הן: {opts_str} — מה הכי מתאים לך?"
+                else:
+                    resp_en = f"I really shouldn't say — I don't want to influence your answer! So,{restate}"
+                    resp_he = f"אני לא רוצה להשפיע על תשובתך! אז,{restate}"
+            else:
+                # "how are you" or generic small-talk
+                resp_en = f"I'm doing well, thanks! Now,{restate}"
+                resp_he = f"הכל טוב, תודה! אז,{restate}"
+            return AgentDecision(
+                intent=AgentIntent.CONVERSATIONAL,
+                confidence=0.88,
+                next_action=NextAction.CONVERSE,
+                response_text=resp_he if he else resp_en,
+                should_save_answer=False,
+            )
+
         if _REPEAT.search(lower):
             return AgentDecision(
                 intent=AgentIntent.REPEAT_QUESTION,
@@ -228,19 +408,27 @@ class RuleBasedFallback:
             )
 
         if _REPHRASE.search(lower):
+            # For MCQ, explain options in plain language instead of relying on FSM re-list
+            rephrase_text = ""
+            if q_type == "mcq" and options:
+                opts_natural = ", ".join(options[:4])
+                rephrase_text = (
+                    f"בטח! הכוונה היא לאחת מהאפשרויות הבאות: {opts_natural}. מה הכי מתאים לך?"
+                    if he else
+                    f"Sure! I'm asking which of these fits best: {opts_natural}. Which one would you say?"
+                )
             return AgentDecision(
                 intent=AgentIntent.REPHRASE_QUESTION,
                 confidence=0.85,
                 next_action=NextAction.REPHRASE,
-                response_text="",   # FSM rephrases
+                response_text=rephrase_text,
                 should_save_answer=False,
             )
 
         # ── answer extraction ────────────────────────────────────────────────
-        options: list[str] = (question.config or {}).get("options", []) if question else []
         extracted = self._extract(lower, text, q_type, options)
         if extracted:
-            ack = random.choice(_ACKS_HE if he else _ACKS_EN)
+            ack = self._pick_ack(extracted, q_type, he)
             response_text = self._build_transition(ack, next_question, he)
             return AgentDecision(
                 intent=AgentIntent.ANSWER,
@@ -253,7 +441,7 @@ class RuleBasedFallback:
 
         # free_text: any non-empty, non-noise response counts
         if q_type == "free_text" and len(text) > 2:
-            ack = "תודה על תשובתך." if he else "Thanks for sharing that."
+            ack = "תודה על תשובתך המפורטת." if he else "That's really helpful, thanks for elaborating."
             response_text = self._build_transition(ack, next_question, he)
             return AgentDecision(
                 intent=AgentIntent.ANSWER,
@@ -281,14 +469,12 @@ class RuleBasedFallback:
     @staticmethod
     def _build_clarification(lower: str, q_type: str, options: list[str], he: bool) -> str:
         """Build a context-aware clarification message instead of a generic fallback."""
-        # For MCQ: remind caller of valid options
+        # For MCQ: list options conversationally
         if q_type == "mcq" and options:
-            opts_str = ", ".join(
-                f"{chr(65+i)}) {opt}" for i, opt in enumerate(options[:4])
-            )
+            opts_natural = " or ".join(options[:4]) if len(options) <= 4 else ", ".join(options[:3]) + f", or {options[3]}"
             if he:
-                return f"לא הצלחתי לזהות את הבחירה שלך. האפשרויות הן: {opts_str}. איזו מהן?"
-            return f"I didn't catch your choice. The options are: {opts_str}. Which one do you mean?"
+                return f"לא הצלחתי לזהות את בחירתך. האפשרויות הן {opts_natural} — מה מתאים לך?"
+            return f"Which would it be — {opts_natural}?"
 
         # For rating: remind caller of the scale
         if q_type == "rating":
@@ -309,14 +495,30 @@ class RuleBasedFallback:
         return "I didn't quite catch that — could you rephrase your answer?"
 
     @staticmethod
+    def _pick_ack(extracted: ExtractedAnswer, q_type: str, he: bool) -> str:
+        """Choose an emotionally appropriate acknowledgement based on answer sentiment."""
+        val = extracted.value
+        if q_type == "rating" and isinstance(val, (int, float)):
+            if val >= 7:
+                return random.choice(_ACKS_HIGH_HE if he else _ACKS_HIGH_EN)
+            if val <= 4:
+                return random.choice(_ACKS_LOW_HE if he else _ACKS_LOW_EN)
+            return random.choice(_ACKS_MID_HE if he else _ACKS_MID_EN)
+        if q_type in ("yes_no", "boolean"):
+            if val is True:
+                return random.choice(_ACKS_HIGH_HE if he else _ACKS_HIGH_EN)
+            return random.choice(_ACKS_LOW_HE if he else _ACKS_LOW_EN)
+        return random.choice(_ACKS_MID_HE if he else _ACKS_MID_EN)
+
+    @staticmethod
     def _build_transition(ack: str, next_question: QuestionContext | None, he: bool) -> str:
         """Combine acknowledgement with a brief intro to the next question.
         If there is no next question (last answer), return a warm survey closing instead."""
         if not next_question:
             # Peak-End Rule: last impression matters most
             return random.choice(_CLOSINGS_HE if he else _CLOSINGS_EN)
-        _intros_en = ["Now,", "Next,", "Moving on —", "One more thing —", "And"]
-        _intros_he = ["עכשיו,", "בנוסף,", "שאלה נוספת —", "ו-"]
+        _intros_en = ["Now,", "Next,", "Moving on —", "One more thing —", "Quick follow-up —"]
+        _intros_he = ["עכשיו,", "בנוסף,", "שאלה נוספת —", "עוד דבר אחד —"]
         intro = random.choice(_intros_he if he else _intros_en)
         # Shorten the prompt to a natural conversational fragment (first sentence)
         prompt = next_question.prompt.split("?")[0].strip()

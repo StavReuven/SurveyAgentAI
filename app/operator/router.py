@@ -6,6 +6,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..telephony.conference import conference_name_for, redirect_call_to_conference
+from ..telephony.session_store import get_store as get_telephony_store
 from ..voice.escalation import get_escalation_queue
 from .audit import OperatorAction, get_audit_log
 
@@ -41,7 +43,11 @@ class TakeoverRequest(BaseModel):
 
 @router.post("/sessions/{session_id}/takeover")
 async def takeover_session(session_id: str, body: TakeoverRequest):
-    """Operator takes control of an escalated call."""
+    """Operator takes control of an escalated call.
+
+    If the session has a live Twilio call (call_sid), the caller is moved into
+    a Conference room so the operator can join via Twilio.Device in the browser.
+    """
     queue = get_escalation_queue()
     snap = queue.get(session_id)
     if snap is None:
@@ -53,7 +59,21 @@ async def takeover_session(session_id: str, body: TakeoverRequest):
     snap.taken_over_at = datetime.now()
     get_audit_log().record(session_id, body.operator_id, OperatorAction.TAKEOVER)
 
-    return {"status": "taken_over", "session": snap.to_dict()}
+    # Try to redirect the live Twilio call into a Conference room
+    tel_session = await get_telephony_store().get_by_session_id(session_id)
+    call_sid = tel_session.call_sid if tel_session else None
+    conference_room = conference_name_for(session_id)
+    conference_active = False
+    if call_sid:
+        conference_active = redirect_call_to_conference(call_sid, conference_room)
+
+    return {
+        "status": "taken_over",
+        "session": snap.to_dict(),
+        "call_sid": call_sid,
+        "conference_room": conference_room,
+        "conference_active": conference_active,
+    }
 
 
 @router.post("/sessions/{session_id}/return")

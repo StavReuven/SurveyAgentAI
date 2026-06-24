@@ -19,7 +19,7 @@ import os
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from .fallback import RuleBasedFallback
+from .fallback import RuleBasedFallback, _ESCALATE, _ESCALATE_MANAGER_RE
 from .prompt import SYSTEM_PROMPT
 from .schema import AgentDecision, AgentIntent, ExtractedAnswer, NextAction
 
@@ -53,11 +53,23 @@ def _build_user_message(
     history: list[dict],
     language: str,
     next_question: QuestionContext | None = None,
+    campaign_name: str = "",
+    campaign_description: str = "",
+    all_questions: list | None = None,
 ) -> str:
     lines: list[str] = [
         f"Survey language: {language}",
         f"Context: {_time_context()}",
     ]
+    if campaign_name:
+        lines.append(f"Survey / campaign name: {campaign_name}")
+    if campaign_description:
+        lines.append(f"Domain context: {campaign_description}")
+
+    if all_questions:
+        lines.append("\nFull survey outline (all questions, for your reference):")
+        for i, aq in enumerate(all_questions, 1):
+            lines.append(f"  Q{i}: [{aq.question_type}] {aq.prompt}")
 
     if question:
         lines.append("\nCurrent question (being answered now):")
@@ -144,6 +156,9 @@ class AgentAIService:
         history: list[dict],
         language: str = "en",
         next_question: QuestionContext | None = None,
+        campaign_name: str = "",
+        campaign_description: str = "",
+        all_questions: list | None = None,
     ) -> AgentDecision:
         """Analyse a respondent's answer; return a structured AgentDecision."""
         if not transcript.strip():
@@ -159,9 +174,39 @@ class AgentAIService:
                 should_save_answer=False,
             )
 
+        # Deterministic pre-check: escalation requests are always handled here
+        # before calling Claude so they work regardless of LLM availability or language.
+        lower = transcript.strip().lower()
+        if _ESCALATE.search(lower):
+            he = language.startswith("he")
+            wants_manager = bool(_ESCALATE_MANAGER_RE.search(lower))
+            if he:
+                resp = (
+                    "בסדר, אני מעביר אותך למנהל עכשיו. רגע בבקשה."
+                    if wants_manager
+                    else "אני מעביר אותך לנציג אנושי עכשיו. רגע בבקשה."
+                )
+            else:
+                resp = (
+                    "Of course — let me connect you to a manager right now. Please hold for a moment."
+                    if wants_manager
+                    else "Sure — I'm connecting you to a human agent now. Please hold for a moment."
+                )
+            return AgentDecision(
+                intent=AgentIntent.ESCALATE,
+                confidence=0.95,
+                next_action=NextAction.ESCALATE,
+                response_text=resp,
+                should_save_answer=False,
+                reason="caller requested human/manager",
+            )
+
         if self._client:
             try:
-                return await self._call_llm(transcript, question, history, language, next_question)
+                return await self._call_llm(
+                    transcript, question, history, language, next_question,
+                    campaign_name, campaign_description, all_questions,
+                )
             except Exception as exc:
                 logger.warning(
                     "AgentAI: LLM call failed (%s) — switching to rule-based fallback", exc
@@ -211,8 +256,14 @@ class AgentAIService:
         history: list[dict],
         language: str,
         next_question: QuestionContext | None = None,
+        campaign_name: str = "",
+        campaign_description: str = "",
+        all_questions: list | None = None,
     ) -> AgentDecision:
-        user_msg = _build_user_message(transcript, question, history, language, next_question)
+        user_msg = _build_user_message(
+            transcript, question, history, language, next_question,
+            campaign_name, campaign_description, all_questions,
+        )
         loop = asyncio.get_running_loop()
         message = await loop.run_in_executor(
             None,

@@ -22,6 +22,7 @@ class Campaign(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     consent_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -232,5 +233,12 @@ class CallLog(Base):
     turns_count: Mapped[int] = mapped_column(Integer, default=0)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
     rapport_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Voice analytics: smoothed per-session vocal features (speaking rate, pitch,
+    # hesitation, energy) plus calibration state — updated on every turn.
+    voice_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Full conversation history (list of turn dicts with event/text/confidence/...).
+    history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     campaign: Mapped["Campaign"] = relationship("Campaign")

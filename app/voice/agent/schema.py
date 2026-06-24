@@ -16,6 +16,7 @@ class AgentIntent(str, Enum):
     UNCLEAR           = "UNCLEAR"
     OFF_TOPIC         = "OFF_TOPIC"
     ESCALATE          = "ESCALATE"
+    CONVERSATIONAL    = "CONVERSATIONAL"   # meta/small-talk the agent answers briefly
 
 
 class NextAction(str, Enum):
@@ -27,6 +28,7 @@ class NextAction(str, Enum):
     OPT_OUT           = "OPT_OUT"
     ESCALATE          = "ESCALATE"
     END_SURVEY        = "END_SURVEY"
+    CONVERSE          = "CONVERSE"         # answer briefly, then return to survey
 
 
 @dataclass
@@ -81,6 +83,7 @@ class AgentDecision:
             AgentIntent.UNCLEAR:           IntentType.UNKNOWN,
             AgentIntent.OFF_TOPIC:         IntentType.UNKNOWN,
             AgentIntent.ESCALATE:          IntentType.UNKNOWN,
+            AgentIntent.CONVERSATIONAL:    IntentType.UNKNOWN,  # no FSM advance
         }
         intent_type = _MAP.get(self.intent, IntentType.UNKNOWN)
 
