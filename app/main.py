@@ -315,6 +315,11 @@ def demo_call_page():
     return FileResponse("app/static/demo-call.html")
 
 
+@app.get("/operator")
+def operator_page():
+    return FileResponse("app/static/operator.html")
+
+
 # ── WebSocket relay for browser demo calls ────────────────────────────────────
 # Maps session_id → set of connected WebSocket clients (caller + operator).
 # Each message is broadcast to all OTHER participants in the same room.
@@ -336,6 +341,21 @@ async def call_ws(websocket: WebSocket, session_id: str, role: str = "caller"):
         while True:
             data = await websocket.receive_json()
             data["sender"] = role
+            # Log text messages to ctx.history ONLY during an active operator takeover,
+            # so the agent knows what was discussed. During normal survey turns the caller
+            # also sends via WebSocket for operator visibility, but those messages are
+            # already logged by the /turn endpoint — logging them here too would create
+            # a duplicate caller_input that misleads the prior-profanity check.
+            msg_text = data.get("text", "")
+            msg_type = data.get("type")  # control frames: "hangup", "return_to_agent"
+            if msg_text and not msg_type:
+                session = _voice_sessions.get(session_id)
+                if session:
+                    snap = get_escalation_queue().get(session_id)
+                    in_takeover = snap is not None and snap.operator_id is not None and snap.returned_at is None
+                    if in_takeover:
+                        event = "operator_message" if role == "operator" else "caller_input"
+                        session["ctx"].log(event, text=msg_text, during_takeover=True)
             dead = set()
             for peer in list(room):
                 if peer is websocket:
@@ -347,6 +367,12 @@ async def call_ws(websocket: WebSocket, session_id: str, role: str = "caller"):
             room -= dead
     except (WebSocketDisconnect, Exception):
         room.discard(websocket)
+        # If the caller disconnected, clean up the session so the operator queue
+        # doesn't show stale entries. More reliable than sendBeacon which can be
+        # cancelled mid-unload by the browser.
+        if role == "caller":
+            _voice_sessions.pop(session_id, None)
+            get_escalation_queue().remove(session_id)
 
 
 @app.get("/api/health")
@@ -1060,6 +1086,39 @@ async def process_voice_turn(
 
     ctx = session["ctx"]
 
+    # On [resume] (operator handing back to agent): reset the FSM to a clean
+    # asking state so accumulated retry counters from before the escalation
+    # don't immediately re-trigger a fallback escalation.
+    # If the session has already escalated 3+ times, end the call instead of
+    # resuming — repeated escalations with no resolution signal the call cannot
+    # be completed productively.
+    if payload.transcript.strip() == "[resume]":
+        from .voice.dialogue.fsm import DialogueState
+        prior_escalations = sum(1 for e in ctx.history if e.get("event") == "escalate")
+        if prior_escalations >= 3:
+            he = getattr(ctx, "_language", "en").startswith("he")
+            end_text = (
+                "נראה שהשיחה לא יכולה להמשיך. תודה על זמנך. שלום."
+                if he else
+                "It seems we're unable to continue this call. Thank you for your time. Goodbye."
+            )
+            ctx.state = DialogueState.DONE
+            ctx.log("session_end", reason="repeated_escalations")
+            return {
+                "session_id": session_id,
+                "response_text": end_text,
+                "dialogue_action": "speak_closing",
+                "current_state": "done",
+                "current_question_key": None,
+                "session_complete": True,
+                "stt_metrics": None,
+                "tts_metrics": None,
+                "mirroring": None,
+                "escalation_snapshot": None,
+            }
+        ctx.state = DialogueState.ASKING
+        ctx.retry_count = 0
+
     # Wrap the provided transcript as an async generator of bytes so the
     # STT adapter's interface is satisfied (mock adapter ignores audio bytes
     # and uses preset responses; real adapters would receive actual audio).
@@ -1207,6 +1266,7 @@ def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(g
     session = _voice_sessions.pop(session_id, None)
     if not session or session["campaign_id"] != campaign_id:
         raise HTTPException(status_code=404, detail="Voice session not found")
+    get_escalation_queue().remove(session_id)
     # Mark any still-active CallLog as failed
     call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
     if call_log and call_log.status == "active":
@@ -1214,6 +1274,24 @@ def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(g
         call_log.ended_at = datetime.now(timezone.utc)
         db.commit()
     return {"ended": True, "session_id": session_id}
+
+
+@app.post("/api/voice/sessions/{session_id}/disconnect")
+def caller_disconnected(session_id: str, db: Session = Depends(get_db)):
+    """Called via sendBeacon when the caller's browser page is closed or refreshed.
+
+    Removes the session from the escalation queue so the operator queue
+    stays clean. The in-memory voice session is also removed so there is
+    no stale state if the caller reconnects with a new session.
+    """
+    _voice_sessions.pop(session_id, None)
+    get_escalation_queue().remove(session_id)
+    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+    if call_log and call_log.status in ("active", "escalated"):
+        call_log.status = "failed"
+        call_log.ended_at = datetime.now(timezone.utc)
+        db.commit()
+    return {"ok": True}
 
 
 @app.get("/dashboard")

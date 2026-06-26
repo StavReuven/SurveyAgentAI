@@ -5,13 +5,13 @@ from .reasons import EscalationReason
 
 # Base urgency weight per reason (higher = more urgent)
 _REASON_WEIGHTS: dict[EscalationReason, float] = {
-    EscalationReason.PROFANITY:        10.0,
-    EscalationReason.ANGRY_CALLER:      9.0,
-    EscalationReason.HIGH_DISTRESS:     8.0,
-    EscalationReason.AGENT_REQUESTED:   7.0,
+    EscalationReason.HIGH_DISTRESS:     9.0,   # psychological distress = highest care priority
+    EscalationReason.ANGRY_CALLER:      8.7,   # active hostility — needs human de-escalation
+    EscalationReason.PROFANITY:         8.5,   # only escalated on repeat — still serious
+    EscalationReason.AGENT_REQUESTED:   8.0,   # explicit request deserves prompt response
     EscalationReason.REPEATED_UNCLEAR:  5.0,
     EscalationReason.MAX_RETRIES:       4.0,
-    EscalationReason.LOW_RAPPORT:       3.0,
+    EscalationReason.LOW_RAPPORT:       2.0,   # softest signal, shouldn't jump the queue
 }
 
 
@@ -21,6 +21,7 @@ def compute_score(
     hesitation_rate: float = 0.0,
     answers_completed: int = 0,
     total_questions: int = 1,
+    prior_escalations: int = 0,
 ) -> float:
     """Return a float urgency score (higher = needs attention sooner).
 
@@ -42,4 +43,7 @@ def compute_score(
     progress = answers_completed / max(total_questions, 1)
     progress_penalty = progress * 2.0
 
-    return round(base + rapport_bonus + hesitation_bonus - progress_penalty, 4)
+    # Repeat-escalation bonus: each prior escalation in this session adds +2 (max +6)
+    repeat_bonus = min(prior_escalations * 2.0, 6.0)
+
+    return round(base + rapport_bonus + hesitation_bonus - progress_penalty + repeat_bonus, 4)

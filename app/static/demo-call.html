@@ -350,6 +350,14 @@ function cleanup() {
   stopMic();
 }
 
+// When the page is refreshed or closed, notify the server so the session is
+// removed from the escalation queue and does not linger for the operator.
+window.addEventListener('beforeunload', () => {
+  if (!sessionId || callStatus === 'idle') return;
+  // sendBeacon is the only reliable way to fire a request during page unload.
+  navigator.sendBeacon(`/api/voice/sessions/${sessionId}/disconnect`);
+});
+
 // ── Send turn to AI ───────────────────────────────────────────────────────────
 
 async function sendText() {
@@ -370,8 +378,10 @@ async function sendText() {
 
 let _rateMultiplier = 1.0;
 
-const _FASTER_RE = /speak (so |too )?slow|too slow|why.*slow|speed up|quicker|faster please|pick up the pace/i;
-const _SLOWER_RE = /speak (so |too )?fast|too fast|slow down|slower please|slow it down|more slowly/i;
+// user thinks agent is too slow → wants FASTER  ("speak so slow" but NOT "speak slower")
+const _FASTER_RE = /\b(speak (?:so |too )?slow(?!er)\b|too slow\b|why.*slow|speed up|quicker|speak faster|faster please|pick up the pace|מהר יותר|מהר מדי)\b/i;
+// user thinks agent is too fast → wants SLOWER
+const _SLOWER_RE = /\b(speak (?:so |too )?fast(?:er)?\b|too fast\b|slow(?:er)?(?:\s+(?:down|please|it\s+down))?\b|more slowly|a (?:bit|little) slow(?:er)?\b|speak slower|lower\b|לאט יותר|לאט מדי)\b/i;
 
 const _PACE_REPLIES = {
   faster: {
@@ -609,21 +619,13 @@ function stopMic() {
 
 function sendOperatorMsg(text) {
   addMsg('caller', '👤', text);
-  // Relay to operator via WS so they see the caller's response
+  // Relay to operator via WS — the server also logs this to ctx.history so the
+  // agent sees the full conversation when control is returned.
+  // We do NOT call /turn here because the caller is talking to the operator,
+  // not answering a survey question — sending to the AI would falsely advance
+  // the survey state before the agent even resumes.
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ text }));
-  }
-  // Also feed the message through the AI pipeline so ctx.answers / FSM advance.
-  // The AI response text is silently discarded; we only act on session_complete.
-  if (sessionId && campaignId) {
-    fetch(`/api/campaigns/${campaignId}/voice/sessions/${sessionId}/turn`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript: text, confidence: 0.9 }),
-    })
-      .then(r => r.json())
-      .then(data => { if (data.session_complete) onSessionComplete(); })
-      .catch(() => {});
   }
 }
 
@@ -658,6 +660,34 @@ function _bestVoice(lang) {
     voices.find(v => v.lang.startsWith(prefix + '-')) ||
     null
   );
+}
+
+// Operator voice — prefer a distinctly different (male) voice so the caller
+// can tell they are now speaking with a human and not the AI agent.
+function _bestOperatorVoice(lang) {
+  const voices = _voicesCache.length ? _voicesCache : speechSynthesis.getVoices();
+  if (lang.startsWith('en')) {
+    const preferred = ['Daniel', 'Alex', 'Tom', 'Fred', 'Google UK English Male',
+                       'Microsoft David', 'Microsoft Mark', 'Microsoft James', 'Arthur', 'Oliver'];
+    for (const name of preferred) {
+      const v = voices.find(v => v.name.includes(name) && v.lang.startsWith('en'));
+      if (v) return v;
+    }
+    // Fallback: any male-sounding voice (male keyword in name)
+    const male = voices.find(v => v.lang.startsWith('en') && v.name.toLowerCase().includes('male'));
+    if (male) return male;
+  }
+  if (lang.startsWith('he')) {
+    // Hebrew: pick any voice that differs from the default agent voice
+    const heVoices = voices.filter(v => v.lang.startsWith('he'));
+    if (heVoices.length > 1) return heVoices[1]; // second available = operator
+    if (heVoices.length === 1) return heVoices[0];
+  }
+  // Last resort: return any voice that isn't the agent's default voice
+  const agentVoice = _bestVoice(lang);
+  const prefix = lang.split('-')[0];
+  const others = voices.filter(v => v.lang.startsWith(prefix) && v !== agentVoice);
+  return others[0] || agentVoice;
 }
 
 // Preprocess text so the synthesiser reads it naturally
@@ -697,13 +727,14 @@ function _speechParams(text, action, isOperator) {
 
 // Speak the full text as a single utterance so the browser handles all
 // punctuation pauses internally — no inter-utterance startup gap.
+// isOperator=true → uses a distinct voice so the caller can tell it's a human.
 function speakText(text, isOperator = false, action = null) {
   if (!document.getElementById('tts-enabled').checked) return;
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
   const isHe = _sessionLang === 'he' || _detectHebrew(text);
   const lang  = isHe ? 'he-IL' : 'en-US';
-  const voice = _bestVoice(lang);
+  const voice = isOperator ? _bestOperatorVoice(lang) : _bestVoice(lang);
   const utt   = new SpeechSynthesisUtterance(_preprocessSpeech(text));
   utt.lang    = lang;
   if (voice) utt.voice = voice;
@@ -778,7 +809,58 @@ function updateTimer() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-loadCampaigns();
+// Support ?resume=SESSION_ID — connect to an existing escalated session as caller
+// so the operator console can reach this tab via the WS relay.
+(async function _maybeResume() {
+  const params = new URLSearchParams(location.search);
+  const resumeId = params.get('resume');
+  if (!resumeId) { loadCampaigns(); return; }
+
+  // Fetch session info from the escalation queue
+  let snap;
+  try {
+    const r = await fetch(`/api/operator/queue/${resumeId}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    snap = await r.json();
+  } catch(e) {
+    document.getElementById('start-screen').innerHTML =
+      `<div style="color:#ef4444;padding:40px">לא נמצאה שיחה מוסלמת עם מזהה ${resumeId}<br><small>${e.message}</small></div>`;
+    return;
+  }
+
+  // Populate state
+  sessionId  = resumeId;
+  campaignId = snap.campaign_id;
+  _sessionLang = /[֐-׿]/.test((snap.current_question_prompt || '') +
+    (snap.history || []).map(e => e.text || '').join(' ')) ? 'he' : 'en';
+  document.getElementById('lang-he').checked = (_sessionLang === 'he');
+
+  // Show call screen
+  document.getElementById('start-screen').style.display  = 'none';
+  document.getElementById('call-screen').style.display   = 'block';
+  document.getElementById('call-campaign-name').textContent = `שיחה מוסלמת (סקר #${snap.campaign_id})`;
+  document.getElementById('call-session-id').textContent = `מזהה: ${sessionId.substring(0,8)}…`;
+  document.getElementById('call-badge').textContent = 'מוסלם';
+  document.getElementById('call-badge').style.background = '#fef3c7';
+  document.getElementById('call-badge').style.color = '#92400e';
+
+  // Replay conversation history so caller sees context
+  (snap.history || []).forEach(e => {
+    if (e.event === 'caller_input' && e.text)  addMsg('caller',   '👤', e.text);
+    if (e.event === 'bot_response'  && e.text)  addMsg('bot',     '🤖', e.text);
+    if (e.event === 'system'        && e.text)  addMsg('system',  '',   e.text);
+  });
+
+  addMsg('system', '', '⚡ שיחה מוסלמת — ממתין למנהל. המנהל בקונסול יכול לדבר איתך עכשיו.');
+  document.getElementById('escalated-banner').style.display = 'block';
+
+  callStartTime = Date.now();
+  timerInterval = setInterval(updateTimer, 1000);
+
+  // Connect as caller — this puts us in the WS room so operator messages arrive here
+  setStatus('escalated');
+  connectWS();
+})();
 </script>
 </body>
 </html>

@@ -120,12 +120,27 @@ _REPEAT = re.compile(
     re.I | re.MULTILINE,
 )
 _REPHRASE = re.compile(
-    r"\b(rephrase|different(ly)?|explain|don'?t understand|not sure what you mean"
+    r"\b(rephrase|replace (\w+ )?(the )?(\w+ )?question|different(ly)?|explain|don'?t understand|not sure what you mean"
     r"|clarify|what do you mean|can you explain|elaborate|i'?m confused"
     r"|remind me|remember me|what are (the |my )?(options|choices|channels|alternatives)"
     r"|what were (the )?(options|choices)|list (the |my )?(options|choices)"
     r"|מה האפשרויות|תזכיר לי|מה הבחירות)\b",
     re.I,
+)
+_PACE_RE = re.compile(
+    r"\b(speak (slower|faster|more slowly|more quickly|up|down|quieter|louder)"
+    r"|slow(er)?( down)?|speed up|too (fast|slow|quick|rapid)"
+    r"|(a (bit|little) )?(slower|faster|more slowly|more quickly)"
+    r"|can (you )?(slow|speed) (down|up)"
+    r"|lower(?:( (your )?(speed|pace|voice|volume))?)"
+    r"|דבר (יותר )?(לאט|מהר|בשקט|חזק)|מהר מדי|לאט מדי)\b",
+    re.I,
+)
+_PACE_FASTER_RE = re.compile(
+    r"\b(faster|more quickly|speed up|too slow(ly)?|quicker|pick up( the)? pace)\b", re.I
+)
+_PACE_SLOWER_RE = re.compile(
+    r"\b(slow(er)?( down)?|slowly|lower|quieter|too (fast|quick|rapid)|לאט|בשקט)\b", re.I
 )
 _ESCALATE = re.compile(
     r"\b("
@@ -163,6 +178,17 @@ _PROFANITY = re.compile(
     r"|כסח|לך תזדיין|בן זונה|מה הבאסה|זיין|שמות גידוף)\b",
     re.I,
 )
+_NAVIGATION_RE = re.compile(
+    r"\b("
+    r"what about the (first|previous|last|earlier|other) question"
+    r"|can we go back|go back to|what happened to (the )?(first|previous|earlier)"
+    r"|you skipped (a |the )?(first |previous )?question"
+    r"|we (never |didn'?t )answered? (that|the first|the previous)"
+    r"|what about (that|it)\??$"
+    r"|מה עם השאלה (הראשונה|הקודמת|הקודם)|חזור לשאלה|דילגת על שאלה"
+    r")\b",
+    re.I,
+)
 _CONVERSATIONAL = re.compile(
     r"\b(what'?s? (?:is )?your name|what do (i|we|you) call you"
     r"|who are you|what are you"
@@ -176,6 +202,13 @@ _CONVERSATIONAL = re.compile(
     r"|what (is|are) (the )?(best( option)?|better option|right (option|choice|answer))"
     r"|which (is|would be) (the )?(best|better|your (pick|choice|preference))"
     r"|what is (the )?(recommendation|your recommendation|your opinion|your view)"
+    # pace / speed requests
+    r"|speak (slower|faster|more slowly|more quickly|up|down|quieter|louder)"
+    r"|slow(er)?( down)?|speed up|too (fast|slow|quick)"
+    r"|(a (bit|little) )?(slower|faster|more slowly|more quickly)"
+    r"|can (you )?(slow|speak) (down|up|slower)"
+    r"|lower(?:( (your )?(speed|pace|voice|volume))?)"
+    r"|דבר (יותר )?(לאט|מהר|בשקט|חזק)|מהר מדי|לאט מדי"
     r"|מה שמך|מי אתה|מה אתה"
     r"|אתה (בוט|AI|מחשב|רובוט|אנושי|בן אדם|אמיתי|וירטואלי|אוטומטי)"
     r"|אני מדבר עם (מחשב|בוט|בן אדם|אוטומציה)"
@@ -278,6 +311,7 @@ class RuleBasedFallback:
         question: QuestionContext | None,
         language: str = "en",
         next_question: QuestionContext | None = None,
+        history: list[dict] | None = None,
     ) -> AgentDecision:
         text = transcript.strip()
         lower = text.lower()
@@ -316,16 +350,36 @@ class RuleBasedFallback:
 
         # ── high-priority meta-intents ────────────────────────────────────────
         if _PROFANITY.search(lower):
+            # Escalate immediately if: anger present in same utterance, OR already warned before
+            anger_combined = bool(_ESCALATE.search(lower))
+            prior_warned = any(
+                _PROFANITY.search((e.get("text") or "").lower())
+                for e in (history or [])
+                if e.get("event") == "caller_input"
+            )
+            if anger_combined or prior_warned:
+                return AgentDecision(
+                    intent=AgentIntent.ESCALATE,
+                    confidence=0.95,
+                    next_action=NextAction.ESCALATE,
+                    response_text=(
+                        "מצטער, אבל לא נוכל להמשיך כך. אני מעביר אותך לנציג." if he
+                        else "I'm sorry, but I'll need to connect you with a member of our team now."
+                    ),
+                    should_save_answer=False,
+                    reason="profanity+anger" if anger_combined else "profanity repeat",
+                )
+            # First offence — warn and continue
+            restate = f" {question.prompt}" if question else ""
             return AgentDecision(
-                intent=AgentIntent.ESCALATE,
-                confidence=0.95,
-                next_action=NextAction.ESCALATE,
+                intent=AgentIntent.CONVERSATIONAL,
+                confidence=0.90,
+                next_action=NextAction.CONVERSE,
                 response_text=(
-                    "אנא שמור על שפה מכובדת. אני מעביר אותך לנציג אנושי." if he
-                    else "Please keep the conversation respectful. I'm transferring you to a human agent now."
+                    f"אבקש לשמור על שפה מכובדת — זה יעזור לנו שניהם.{restate}" if he
+                    else f"I'd appreciate if we kept things respectful — it helps us both. Anyway,{restate}"
                 ),
                 should_save_answer=False,
-                reason="profanity detected",
             )
 
         if _ESCALATE.search(lower):
@@ -386,6 +440,15 @@ class RuleBasedFallback:
                 else:
                     resp_en = f"I really shouldn't say — I don't want to influence your answer! So,{restate}"
                     resp_he = f"אני לא רוצה להשפיע על תשובתך! אז,{restate}"
+            elif _PACE_RE.search(lower):
+                # Speaking pace / volume request ("too slow" = wants faster; "too fast" = wants slower)
+                slower = bool(_PACE_SLOWER_RE.search(lower)) and not bool(_PACE_FASTER_RE.search(lower))
+                if slower:
+                    resp_en = f"Of course, I'll slow down a bit.{restate}"
+                    resp_he = f"בטח, אדבר קצת יותר לאט.{restate}"
+                else:
+                    resp_en = f"Sure, I'll pick up the pace.{restate}"
+                    resp_he = f"בסדר, אאיץ קצת.{restate}"
             else:
                 # "how are you" or generic small-talk
                 resp_en = f"I'm doing well, thanks! Now,{restate}"

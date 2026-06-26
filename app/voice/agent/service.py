@@ -19,7 +19,7 @@ import os
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from .fallback import RuleBasedFallback, _ESCALATE, _ESCALATE_MANAGER_RE
+from .fallback import RuleBasedFallback, _ESCALATE, _ESCALATE_MANAGER_RE, _PROFANITY, _PACE_RE, _PACE_SLOWER_RE, _PACE_FASTER_RE, _NAVIGATION_RE
 from .prompt import SYSTEM_PROMPT
 from .schema import AgentDecision, AgentIntent, ExtractedAnswer, NextAction
 
@@ -56,6 +56,7 @@ def _build_user_message(
     campaign_name: str = "",
     campaign_description: str = "",
     all_questions: list | None = None,
+    is_resume: bool = False,
 ) -> str:
     lines: list[str] = [
         f"Survey language: {language}",
@@ -94,16 +95,21 @@ def _build_user_message(
         if cfg2.get("min") is not None:
             lines.append(f"  range: {cfg2['min']}–{cfg2.get('max', 10)}")
 
-    recent = history[-8:] if len(history) > 8 else history
+    # On [resume], send the full history so the agent sees everything the operator said.
+    # Otherwise, cap at the last 10 events (enough context, cheap on tokens).
+    recent = history if is_resume else (history[-10:] if len(history) > 10 else history)
     if recent:
         lines.append("\nRecent conversation:")
         for e in recent:
-            role = e.get("event", "")
+            ev = e.get("event", "")
             text = e.get("text", "")
-            if role == "caller_input" and text:
-                lines.append(f"  Respondent: {text}")
-            elif role == "bot_response" and text:
+            if ev == "caller_input" and text:
+                label = "Respondent (to operator)" if e.get("during_takeover") else "Respondent"
+                lines.append(f"  {label}: {text}")
+            elif ev == "bot_response" and text:
                 lines.append(f"  Agent: {text}")
+            elif ev == "operator_message" and text:
+                lines.append(f"  Human Operator: {text}")
 
     lines.append(f'\nRespondent\'s latest answer: "{transcript}"')
     lines.append("\nAnalyse this answer and return your decision as JSON.")
@@ -201,18 +207,84 @@ class AgentAIService:
                 reason="caller requested human/manager",
             )
 
+        # Deterministic pre-check: profanity — warn once, escalate on repeat or combined anger
+        if _PROFANITY.search(lower):
+            he = language.startswith("he")
+            anger_combined = bool(_ESCALATE.search(lower))
+            prior_warned = any(
+                _PROFANITY.search((e.get("text") or "").lower())
+                for e in history
+                if e.get("event") == "caller_input" and not e.get("during_takeover")
+            )
+            if anger_combined or prior_warned:
+                return AgentDecision(
+                    intent=AgentIntent.ESCALATE,
+                    confidence=0.95,
+                    next_action=NextAction.ESCALATE,
+                    response_text=(
+                        "מצטער, אבל לא נוכל להמשיך כך. אני מעביר אותך לנציג." if he
+                        else "I'm sorry, but I'll need to connect you with a member of our team now."
+                    ),
+                    should_save_answer=False,
+                    reason="profanity+anger" if anger_combined else "profanity repeat",
+                )
+            restate = f" {question.prompt}" if question else ""
+            return AgentDecision(
+                intent=AgentIntent.CONVERSATIONAL,
+                confidence=0.90,
+                next_action=NextAction.CONVERSE,
+                response_text=(
+                    f"אבקש לשמור על שפה מכובדת — זה יעזור לנו שניהם.{restate}" if he
+                    else f"I'd appreciate if we kept things respectful — it helps us both. Anyway,{restate}"
+                ),
+                should_save_answer=False,
+            )
+
+        # Deterministic pre-check: caller asking about a skipped/previous question
+        if _NAVIGATION_RE.search(lower):
+            he = language.startswith("he")
+            restate = f" {question.prompt}" if question else ""
+            return AgentDecision(
+                intent=AgentIntent.CONVERSATIONAL,
+                confidence=0.93,
+                next_action=NextAction.CONVERSE,
+                response_text=(
+                    f"נקודה טובה — נמשיך מכאן.{restate}" if he
+                    else f"Good point — let's press on from here, shall we?{restate}"
+                ),
+                should_save_answer=False,
+                reason="navigation question detected",
+            )
+
+        # Deterministic pre-check: speaking pace/speed requests — handle without LLM
+        if _PACE_RE.search(lower):
+            he = language.startswith("he")
+            slower = bool(_PACE_SLOWER_RE.search(lower)) and not bool(_PACE_FASTER_RE.search(lower))
+            restate = f" {question.prompt}" if question else ""
+            return AgentDecision(
+                intent=AgentIntent.CONVERSATIONAL,
+                confidence=0.92,
+                next_action=NextAction.CONVERSE,
+                response_text=(
+                    (f"בטח, אדבר קצת יותר לאט.{restate}" if slower else f"בסדר, אאיץ קצת.{restate}") if he
+                    else (f"Of course, I'll slow down a bit.{restate}" if slower else f"Sure, I'll pick up the pace.{restate}")
+                ),
+                should_save_answer=False,
+            )
+
         if self._client:
             try:
                 return await self._call_llm(
                     transcript, question, history, language, next_question,
                     campaign_name, campaign_description, all_questions,
+                    is_resume=(transcript.strip() == "[resume]"),
                 )
             except Exception as exc:
                 logger.warning(
                     "AgentAI: LLM call failed (%s) — switching to rule-based fallback", exc
                 )
 
-        return self._fallback.analyze(transcript, question, language, next_question)
+        return self._fallback.analyze(transcript, question, language, next_question, history=history)
 
     def normalize_answer(
         self,
@@ -259,10 +331,12 @@ class AgentAIService:
         campaign_name: str = "",
         campaign_description: str = "",
         all_questions: list | None = None,
+        is_resume: bool = False,
     ) -> AgentDecision:
         user_msg = _build_user_message(
             transcript, question, history, language, next_question,
             campaign_name, campaign_description, all_questions,
+            is_resume=is_resume,
         )
         loop = asyncio.get_running_loop()
         message = await loop.run_in_executor(

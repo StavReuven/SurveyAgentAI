@@ -296,7 +296,7 @@ function demoChatPanel(sessionId) {
       <div class="chat-panel-header">
         <div class="pulse" style="background:white;"></div>
         🎧 דיבור ישיר עם המתקשר
-        <span style="font-size:11px;opacity:0.8;margin-right:auto;">פתח <a href="/demo-call" target="_blank" style="color:white;">שיחת דמו</a> בטאב נפרד</span>
+        <span style="font-size:11px;opacity:0.8;margin-right:auto;">פתח <a href="/demo-call?resume=${sessionId}" target="_blank" style="color:white;">שיחת דמו (כלקוח)</a> בטאב נפרד</span>
       </div>
       <div class="chat-panel-messages" id="demo-msgs-${sessionId}"></div>
       <div class="chat-panel-input">
@@ -385,9 +385,28 @@ function renderQueue(sessions) {
     return;
   }
   el.innerHTML = sessions.map(s => sessionCard(s)).join('');
+  // Scroll transcript boxes to bottom so most recent lines are visible
+  document.querySelectorAll('.transcript-box').forEach(b => { b.scrollTop = b.scrollHeight; });
   sessions.forEach(s => {
     _demoLang[s.session_id] = _detectSessionLang(s);
     if (s.operator_id) {
+      // Pre-populate chat log with AI conversation history (only once per session)
+      if (!_demoLog[s.session_id]) {
+        const entries = (s.history || []).flatMap(e => {
+          if (e.event === 'caller_input' && e.text)
+            return [{ type: 'in',     text: `👤 ${e.text}` }];
+          if (e.event === 'bot_response' && e.text)
+            return [{ type: 'system', text: `🤖 ${e.text}` }];
+          return [];
+        });
+        if (entries.length) {
+          _demoLog[s.session_id] = [
+            { type: 'system', text: '─── שיחה עם הסוכן (לפני ההסלמה) ───' },
+            ...entries,
+            { type: 'system', text: '─── תחילת שיחה ישירה ───' },
+          ];
+        }
+      }
       _replayLog(s.session_id);
       // Re-establish WS after page refresh so hangup notifications can reach caller
       getDemoWS(s.session_id);
@@ -421,13 +440,13 @@ function scoreBar(score) {
 
 function transcriptHtml(history) {
   if (!history || !history.length) return '<em style="color:var(--text-muted)">אין תמליל</em>';
-  return history.slice(-10).map(e => {
+  return history.map(e => {
     if (e.event === 'caller_input' && e.text)
       return `<div class="msg-caller">👤 ${e.text}</div>`;
     if (e.event === 'bot_response' && e.text)
       return `<div class="msg-agent">🤖 ${e.text}</div>`;
     return '';
-  }).join('');
+  }).filter(Boolean).join('');
 }
 
 function audioPanel(s) {
@@ -490,7 +509,7 @@ function sessionCard(s) {
       : ''}
 
     <div style="margin-top:10px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">תמליל שיחה (10 שורות אחרונות):</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">תמליל שיחה עם הסוכן:</div>
       <div class="transcript-box">${transcriptHtml(s.history)}</div>
     </div>
 
