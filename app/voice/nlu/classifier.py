@@ -90,11 +90,24 @@ _RULES: list[_Rule] = [
 # Rating-type answer pattern: digit 1-10 or spoken number words
 _RATING_PATTERN = re.compile(r"\b(10|[1-9])\b")
 _RATING_WORD_PATTERN = re.compile(
-    r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\b", re.IGNORECASE
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"אחד|אחת|שתיים|שניים|שני|שתי|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|"
+    r"שש|שישה|שבע|שבעה|שמונה|תשע|תשעה|עשר|עשרה)\b",
+    re.IGNORECASE,
 )
 _RATING_WORD_MAP = {
     "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
     "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "אחד": "1", "אחת": "1",
+    "שתיים": "2", "שניים": "2", "שני": "2", "שתי": "2",
+    "שלוש": "3", "שלושה": "3",
+    "ארבע": "4", "ארבעה": "4",
+    "חמש": "5", "חמישה": "5",
+    "שש": "6", "שישה": "6",
+    "שבע": "7", "שבעה": "7",
+    "שמונה": "8",
+    "תשע": "9", "תשעה": "9",
+    "עשר": "10", "עשרה": "10",
 }
 
 # MCQ answer patterns (a/b/c/d or "option one" etc.)

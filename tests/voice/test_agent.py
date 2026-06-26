@@ -303,7 +303,7 @@ class TestHebrew:
     def test_opt_out_in_english_still_works_for_hebrew_sessions(self):
         d = fb.analyze("stop calling me", _q(), language="he")
         assert d.intent == AgentIntent.OPT_OUT
-        assert any(ord(c) > 0x590 for c in d.response_text), "Expected Hebrew response text"
+        assert "נסיר" in d.response_text   # Hebrew response text
 
     def test_repeat_hebrew_response(self):
         d = fb.analyze("say that again", _q(), language="he")

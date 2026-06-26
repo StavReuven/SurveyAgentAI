@@ -129,21 +129,39 @@ _DIGIT_PATTERN = re.compile(r"(?<!\d)(?<!\d:)\b(10|[1-9])\b(?!:\d)")
 _RATING_WORDS: dict[str, int] = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    # sentiment → approximate rating
+    # Hebrew number words
+    "אחד": 1, "אחת": 1,
+    "שתיים": 2, "שניים": 2, "שני": 2,
+    "שלוש": 3, "שלושה": 3,
+    "ארבע": 4, "ארבעה": 4,
+    "חמש": 5, "חמישה": 5,
+    "שש": 6, "שישה": 6,
+    "שבע": 7, "שבעה": 7,
+    "שמונה": 8,
+    "תשע": 9, "תשעה": 9,
+    "עשר": 10, "עשרה": 10,
+    # Hebrew sentiment → approximate rating
+    "גרוע": 2, "גרועה": 2, "נורא": 1, "איום": 1,
+    "ממוצע": 5, "בסדר": 5, "סביר": 5,
+    "טוב": 7, "טובה": 7, "נחמד": 7, "נחמדה": 7,
+    "מצוין": 9, "מצוינת": 9, "מעולה": 10, "נהדר": 9, "נהדרת": 9,
+    # English sentiment → approximate rating
     "terrible": 1, "awful": 1, "horrible": 1,
     "bad": 2, "poor": 2, "disappointing": 2,
-    "okay": 3, "ok": 3, "average": 3, "fine": 3, "alright": 3, "mediocre": 3,
-    "good": 4, "nice": 4, "well": 4, "great": 4, "pretty good": 4,
-    "excellent": 5, "perfect": 5, "amazing": 5, "wonderful": 5,
-    "outstanding": 5, "fantastic": 5, "superb": 5,
+    "okay": 5, "ok": 5, "average": 5, "fine": 5, "alright": 5, "mediocre": 5,
+    "good": 7, "nice": 7, "well": 7, "great": 8, "pretty good": 7,
+    "excellent": 9, "perfect": 10, "amazing": 9, "wonderful": 9,
+    "outstanding": 10, "fantastic": 9, "superb": 10,
 }
 _YES = re.compile(
     r"\b(yes|yeah|yep|yup|sure|absolutely|correct|that'?s right|affirmative"
-    r"|of course|definitely|certainly|indeed)\b",
+    r"|of course|definitely|certainly|indeed"
+    r"|כן|בהחלט|נכון|ודאי|אכן|בטח|סבבה|ממליץ|ממליצה)\b",
     re.I,
 )
 _NO = re.compile(
-    r"\b(no|nope|nah|not really|negative|incorrect|wrong|never|not at all)\b",
+    r"\b(no|nope|nah|not really|negative|incorrect|wrong|never|not at all"
+    r"|לא|שגוי|לא ממליץ|לא ממליצה)\b",
     re.I,
 )
 _MCQ_LETTER   = re.compile(r"\b([a-dA-D])\b")
