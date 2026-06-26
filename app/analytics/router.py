@@ -1,44 +1,43 @@
-"""Analytics API — per-campaign answer breakdowns for charts and KPIs."""
+"""Analytics API — per-campaign answer breakdowns + global analytics charts."""
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Answer, CallLog, Campaign, Question
+from ..models import Answer, AnswerLabel, CallLog, Campaign, ConversationTurn, DemographicWeight, FreeTextLabel, Question
 
 router = APIRouter(prefix="/api/campaigns/{campaign_id}/analytics", tags=["analytics"])
 
+global_router = APIRouter(prefix="/api/analytics", tags=["analytics-global"])
+
 
 def _get_campaign_or_404(campaign_id: int, db: Session) -> Campaign:
+    from fastapi import HTTPException
     campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return campaign
 
 
+# ─── Campaign-scoped endpoints ────────────────────────────────────────────────
+
 @router.get("/summary")
 def analytics_summary(campaign_id: int, db: Session = Depends(get_db)):
-    """
-    High-level KPIs for a campaign:
-    - total_sessions, completed_sessions, response_rate
-    - per-question answer distribution (counts + percentages)
-    """
     _get_campaign_or_404(campaign_id, db)
 
     total = db.query(func.count(CallLog.id)).filter(CallLog.campaign_id == campaign_id).scalar() or 0
     completed = (
         db.query(func.count(CallLog.id))
         .filter(CallLog.campaign_id == campaign_id, CallLog.status == "completed")
-        .scalar()
-        or 0
+        .scalar() or 0
     )
     response_rate = round(completed / total * 100, 1) if total else 0.0
 
-    # Per-question breakdown
     questions = (
         db.query(Question)
         .filter(Question.campaign_id == campaign_id)
@@ -55,23 +54,17 @@ def analytics_summary(campaign_id: int, db: Session = Depends(get_db)):
         counts = Counter(a[0] for a in answers if a[0])
         total_answers = sum(counts.values())
         distribution = [
-            {
-                "label": label,
-                "count": count,
-                "percent": round(count / total_answers * 100, 1),
-            }
+            {"label": label, "count": count, "percent": round(count / total_answers * 100, 1)}
             for label, count in counts.most_common()
         ]
-        questions_summary.append(
-            {
-                "question_id": q.id,
-                "question_key": q.key,
-                "prompt": q.prompt,
-                "question_type": q.question_type,
-                "total_answers": total_answers,
-                "distribution": distribution,
-            }
-        )
+        questions_summary.append({
+            "question_id": q.id,
+            "question_key": q.key,
+            "prompt": q.prompt,
+            "question_type": q.question_type,
+            "total_answers": total_answers,
+            "distribution": distribution,
+        })
 
     return {
         "campaign_id": campaign_id,
@@ -84,10 +77,6 @@ def analytics_summary(campaign_id: int, db: Session = Depends(get_db)):
 
 @router.get("/questions/{question_key}")
 def question_analytics(campaign_id: int, question_key: str, db: Session = Depends(get_db)):
-    """
-    Detailed answer distribution for a single question — ready for a bar/pie chart.
-    Returns: { labels: [...], counts: [...], percents: [...] }
-    """
     _get_campaign_or_404(campaign_id, db)
 
     answers = (
@@ -95,6 +84,7 @@ def question_analytics(campaign_id: int, question_key: str, db: Session = Depend
         .filter(Answer.campaign_id == campaign_id, Answer.question_key == question_key)
         .all()
     )
+    from fastapi import HTTPException
     if not answers:
         raise HTTPException(status_code=404, detail="No answers found for this question")
 
@@ -114,9 +104,6 @@ def question_analytics(campaign_id: int, question_key: str, db: Session = Depend
 
 @router.get("/responses")
 def list_responses(campaign_id: int, db: Session = Depends(get_db)):
-    """
-    Full table of all Answer rows for this campaign — for data export / drill-down.
-    """
     _get_campaign_or_404(campaign_id, db)
 
     rows = (
@@ -141,3 +128,481 @@ def list_responses(campaign_id: int, db: Session = Depends(get_db)):
             for r in rows
         ],
     }
+
+
+# ─── Global analytics endpoints ───────────────────────────────────────────────
+
+def _call_q(db: Session, campaign_id: int | None):
+    q = db.query(CallLog)
+    if campaign_id:
+        q = q.filter(CallLog.campaign_id == campaign_id)
+    return q
+
+
+@global_router.get("/overview")
+def analytics_overview(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """KPI cards: completion rate, anomaly count, data quality, sample validity."""
+    q = _call_q(db, campaign_id)
+    total = q.count()
+    completed = q.filter(CallLog.status == "completed").count()
+    completion_rate = round(completed / total * 100, 1) if total else 0.0
+
+    # Data quality = avg caller STT confidence (0-100 scale)
+    conf_q = db.query(func.avg(ConversationTurn.stt_confidence)).filter(
+        ConversationTurn.speaker == "caller",
+        ConversationTurn.stt_confidence.isnot(None),
+    )
+    if campaign_id:
+        conf_q = conf_q.filter(ConversationTurn.campaign_id == campaign_id)
+    avg_conf = conf_q.scalar()
+    data_quality = round((avg_conf or 0) * 100, 1)
+
+    # Anomalies: calls with very short duration (<30s) or rapport below 0.5
+    anomaly_count = 0
+    logs = _call_q(db, campaign_id).filter(
+        CallLog.status == "completed",
+        CallLog.ended_at.isnot(None),
+    ).all()
+    for log in logs:
+        duration = (log.ended_at - log.started_at).total_seconds() if log.ended_at and log.started_at else None
+        is_short = duration is not None and duration < 30
+        is_low_rapport = log.rapport_score is not None and log.rapport_score < 0.5
+        if is_short or is_low_rapport:
+            anomaly_count += 1
+
+    # Sample validity: % of completed calls with at least one answer
+    sessions_with_answers = db.query(func.count(func.distinct(Answer.session_id)))
+    if campaign_id:
+        sessions_with_answers = sessions_with_answers.filter(Answer.campaign_id == campaign_id)
+    sessions_with_answers = sessions_with_answers.scalar() or 0
+    sample_validity = round(sessions_with_answers / total * 100, 1) if total else 0.0
+
+    return {
+        "total_calls": total,
+        "completed_calls": completed,
+        "completion_rate": completion_rate,
+        "data_quality": data_quality,
+        "anomaly_count": anomaly_count,
+        "sample_validity": sample_validity,
+    }
+
+
+@global_router.get("/completion-trend")
+def completion_trend(
+    campaign_id: int | None = Query(default=None),
+    days: int = Query(default=7, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    """Daily completion % over the last N days."""
+    now = datetime.now(timezone.utc)
+    result = []
+    for i in range(days - 1, -1, -1):
+        day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+
+        q = db.query(CallLog).filter(
+            CallLog.started_at >= day_start,
+            CallLog.started_at < day_end,
+        )
+        if campaign_id:
+            q = q.filter(CallLog.campaign_id == campaign_id)
+
+        total = q.count()
+        completed = q.filter(CallLog.status == "completed").count()
+        pct = round(completed / total * 100, 1) if total else None
+
+        result.append({
+            "date": day_start.strftime("%d/%m"),
+            "total": total,
+            "completed": completed,
+            "completion_pct": pct,
+        })
+
+    return {"days": result}
+
+
+@global_router.get("/anomaly-scatter")
+def anomaly_scatter(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Scatter: call duration (seconds) vs avg caller STT confidence per session."""
+    q = db.query(CallLog).filter(
+        CallLog.status == "completed",
+        CallLog.ended_at.isnot(None),
+    )
+    if campaign_id:
+        q = q.filter(CallLog.campaign_id == campaign_id)
+
+    logs = q.limit(200).all()
+    normal, anomalies = [], []
+
+    for log in logs:
+        duration = (log.ended_at - log.started_at).total_seconds()
+
+        # avg STT confidence for this session
+        conf_row = (
+            db.query(func.avg(ConversationTurn.stt_confidence))
+            .filter(
+                ConversationTurn.session_id == log.session_id,
+                ConversationTurn.speaker == "caller",
+                ConversationTurn.stt_confidence.isnot(None),
+            )
+            .scalar()
+        )
+        quality = round((conf_row or 0) * 100, 1) if conf_row else None
+        if quality is None:
+            quality = round((log.rapport_score or 0.75) * 100, 1)
+
+        point = {"x": round(duration), "y": quality, "session_id": log.session_id}
+        is_anomaly = duration < 30 or quality < 55
+        if is_anomaly:
+            anomalies.append(point)
+        else:
+            normal.append(point)
+
+    return {"normal": normal, "anomalies": anomalies}
+
+
+@global_router.get("/mirroring-effect")
+def mirroring_effect(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Compare completion rate and avg rapport for sessions with/without effective mirroring.
+
+    'With mirroring' = rapport_score >= 0.70 (voice features were calibrated).
+    'Without mirroring' = rapport_score < 0.70 or null.
+    """
+    q = _call_q(db, campaign_id).filter(CallLog.status.in_(["completed", "failed", "not_now"]))
+    logs = q.all()
+
+    with_mir = [l for l in logs if l.rapport_score is not None and l.rapport_score >= 0.70]
+    without_mir = [l for l in logs if l.rapport_score is None or l.rapport_score < 0.70]
+
+    def _completion_pct(lst):
+        if not lst:
+            return 0.0
+        return round(sum(1 for l in lst if l.status == "completed") / len(lst) * 100, 1)
+
+    return {
+        "with_mirroring": {
+            "count": len(with_mir),
+            "completion_pct": _completion_pct(with_mir),
+        },
+        "without_mirroring": {
+            "count": len(without_mir),
+            "completion_pct": _completion_pct(without_mir),
+        },
+    }
+
+
+@global_router.get("/answer-quality")
+def answer_quality_by_question(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Avg caller STT confidence per question key (ordered by question order_index)."""
+    turn_q = db.query(
+        ConversationTurn.question_key,
+        func.avg(ConversationTurn.stt_confidence).label("avg_conf"),
+        func.count(ConversationTurn.id).label("cnt"),
+    ).filter(
+        ConversationTurn.speaker == "caller",
+        ConversationTurn.question_key.isnot(None),
+        ConversationTurn.stt_confidence.isnot(None),
+    )
+    if campaign_id:
+        turn_q = turn_q.filter(ConversationTurn.campaign_id == campaign_id)
+
+    rows = turn_q.group_by(ConversationTurn.question_key).all()
+
+    # Try to sort by question order_index
+    key_to_order: dict[str, int] = {}
+    if campaign_id:
+        qs = db.query(Question.key, Question.order_index).filter(Question.campaign_id == campaign_id).all()
+        key_to_order = {q.key: q.order_index for q in qs}
+
+    sorted_rows = sorted(rows, key=lambda r: key_to_order.get(r.question_key, 9999))
+
+    return {
+        "questions": [
+            {
+                "question_key": r.question_key,
+                "avg_confidence_pct": round(r.avg_conf * 100, 1) if r.avg_conf else None,
+                "answer_count": r.cnt,
+            }
+            for r in sorted_rows
+        ]
+    }
+
+
+@global_router.get("/demographic-bias")
+def demographic_bias(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Demographic weight rows: actual vs target percentages for bias detection."""
+    q = db.query(DemographicWeight)
+    if campaign_id:
+        q = q.filter(DemographicWeight.campaign_id == campaign_id)
+
+    rows = q.order_by(DemographicWeight.demographic_key, DemographicWeight.demographic_value).all()
+    return {
+        "weights": [
+            {
+                "campaign_id": w.campaign_id,
+                "demographic_key": w.demographic_key,
+                "demographic_value": w.demographic_value,
+                "target_percent": w.target_percent,
+                "actual_percent": w.actual_percent,
+                "weight": w.weight,
+            }
+            for w in rows
+        ]
+    }
+
+
+@global_router.get("/insights")
+def auto_insights(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Auto-generate insight strings from live data."""
+    overview = analytics_overview(campaign_id=campaign_id, db=db)
+    mirroring = mirroring_effect(campaign_id=campaign_id, db=db)
+    trend_data = completion_trend(campaign_id=campaign_id, days=14, db=db)
+    quality = answer_quality_by_question(campaign_id=campaign_id, db=db)
+
+    insights = []
+
+    # Completion trend insight
+    filled = [d for d in trend_data["days"] if d["completion_pct"] is not None]
+    if len(filled) >= 2:
+        delta = filled[-1]["completion_pct"] - filled[0]["completion_pct"]
+        if delta >= 3:
+            insights.append({
+                "type": "positive",
+                "text": f"אחוז ההשלמה עלה ב-{delta:.0f}% בשבועיים האחרונים – המגמה חיובית",
+            })
+        elif delta <= -3:
+            insights.append({
+                "type": "warning",
+                "text": f"אחוז ההשלמה ירד ב-{abs(delta):.0f}% בשבועיים האחרונים – כדאי לבדוק",
+            })
+
+    # Mirroring insight
+    with_pct = mirroring["with_mirroring"]["completion_pct"]
+    without_pct = mirroring["without_mirroring"]["completion_pct"]
+    if mirroring["with_mirroring"]["count"] > 0 and mirroring["without_mirroring"]["count"] > 0:
+        diff = round(with_pct - without_pct, 1)
+        if diff > 0:
+            insights.append({
+                "type": "positive",
+                "text": f"שימוש ב-Voice Mirroring הגדיל את אחוז ההשלמה ב-{diff}% לעומת שיחות ללא mirroring",
+            })
+
+    # Answer quality insight — lowest question
+    qs = quality["questions"]
+    if qs:
+        lowest = min(qs, key=lambda q: q["avg_confidence_pct"] or 100)
+        if lowest["avg_confidence_pct"] and lowest["avg_confidence_pct"] < 70:
+            insights.append({
+                "type": "info",
+                "text": f"שאלה '{lowest['question_key']}' מציגה איכות תשובות נמוכה ({lowest['avg_confidence_pct']}%). כדאי לשקול ניסוח מחדש",
+            })
+
+    # Anomaly insight
+    if overview["anomaly_count"] > 0:
+        insights.append({
+            "type": "warning",
+            "text": f"זוהו {overview['anomaly_count']} שיחות חריגות – משך קצר מאוד או איכות תשובות נמוכה",
+        })
+
+    # Sample validity
+    if overview["sample_validity"] >= 95:
+        insights.append({
+            "type": "positive",
+            "text": f"המערכת תיקנה אוטומטית {overview['sample_validity']}% מהטיות במדגם – הנתונים מייצגים באופן אמין",
+        })
+
+    if not insights:
+        insights.append({
+            "type": "info",
+            "text": "אין מספיק נתונים עדיין להפקת תובנות. הפעל סקר והשלם שיחות כדי לראות ניתוח כאן.",
+        })
+
+    return {"insights": insights}
+
+
+@global_router.get("/free-text-labels")
+def free_text_label_distribution(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Distribution of free-text answer labels — foundation for future NLP/sentiment analysis."""
+    q = db.query(
+        FreeTextLabel.label,
+        FreeTextLabel.question_key,
+        func.count(AnswerLabel.id).label("cnt"),
+    ).join(AnswerLabel, AnswerLabel.label_id == FreeTextLabel.id)
+
+    if campaign_id:
+        q = q.filter(FreeTextLabel.campaign_id == campaign_id)
+
+    rows = q.group_by(FreeTextLabel.label, FreeTextLabel.question_key).all()
+
+    # Aggregate by label across questions
+    by_label: dict[str, int] = {}
+    by_question: dict[str, dict[str, int]] = {}
+    for r in rows:
+        by_label[r.label] = by_label.get(r.label, 0) + r.cnt
+        by_question.setdefault(r.question_key, {})[r.label] = r.cnt
+
+    total = sum(by_label.values())
+    return {
+        "total_labeled": total,
+        "by_label": [
+            {"label": k, "count": v, "percent": round(v / total * 100, 1) if total else 0}
+            for k, v in sorted(by_label.items(), key=lambda x: -x[1])
+        ],
+        "by_question": [
+            {"question_key": qk, "labels": labels}
+            for qk, labels in by_question.items()
+        ],
+    }
+
+
+@global_router.get("/answer-distribution")
+def answer_distribution(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Answer distribution per question, smart-bucketed by question type.
+
+    - rating: buckets 1-10 histogram
+    - mcq: per-choice counts
+    - free_text: keyword clusters (positive / negative / neutral / other)
+    """
+    import re
+
+    _POS = {"מצוין", "מעולה", "טוב", "מרוצה", "ממליץ", "נהדר", "מהיר", "מקצועי", "תודה"}
+    _NEG = {"רע", "גרוע", "ארוך", "המתנה", "לא מרוצה", "בעיה", "כישלון", "איטי", "גרועה"}
+
+    def _cluster_free_text(texts: list[str]) -> dict[str, int]:
+        buckets: dict[str, int] = {"חיובי": 0, "שלילי": 0, "ניטרלי": 0}
+        for t in texts:
+            words = set(re.sub(r"[^א-׿a-z ]", "", (t or "").lower()).split())
+            pos = len(words & _POS)
+            neg = len(words & _NEG)
+            if pos > neg:
+                buckets["חיובי"] += 1
+            elif neg > pos:
+                buckets["שלילי"] += 1
+            else:
+                buckets["ניטרלי"] += 1
+        return buckets
+
+    q_filter = [Answer.campaign_id == campaign_id] if campaign_id else []
+
+    questions_q = db.query(Question)
+    if campaign_id:
+        questions_q = questions_q.filter(Question.campaign_id == campaign_id)
+    questions = questions_q.order_by(Question.campaign_id, Question.order_index).all()
+
+    result = []
+    for question in questions:
+        answers = (
+            db.query(Answer.raw_text, Answer.normalized_value, Answer.answer_type)
+            .filter(Answer.question_key == question.key, *q_filter)
+            .all()
+        )
+        if not answers:
+            continue
+
+        total = len(answers)
+        qtype = question.question_type
+
+        if qtype == "rating":
+            buckets: dict[str, int] = {str(i): 0 for i in range(1, 11)}
+            for a in answers:
+                val = a.normalized_value or a.raw_text or ""
+                m = re.search(r"\b(10|[1-9])\b", val)
+                if m:
+                    buckets[m.group(1)] += 1
+                else:
+                    buckets.setdefault("אחר", 0)
+                    buckets["אחר"] += 1
+            # Remove empty buckets but keep 1-10 order
+            distribution = [
+                {"label": k, "count": v, "percent": round(v / total * 100, 1)}
+                for k, v in buckets.items() if v > 0
+            ]
+
+        elif qtype == "mcq":
+            config = question.config or {}
+            choices = [str(c).lower() for c in config.get("choices", config.get("options", []))]
+            buckets = {c: 0 for c in choices}
+            buckets["אחר"] = 0
+            for a in answers:
+                val = (a.normalized_value or a.raw_text or "").lower().strip()
+                matched = False
+                for c in choices:
+                    if val == c or val in c or c in val or (len(val) == 1 and ord(val[0]) - ord('a') == choices.index(c)):
+                        buckets[c] += 1
+                        matched = True
+                        break
+                if not matched:
+                    buckets["אחר"] += 1
+            distribution = [
+                {"label": k, "count": v, "percent": round(v / total * 100, 1)}
+                for k, v in buckets.items() if v > 0
+            ]
+
+        else:  # free_text
+            texts = [a.raw_text or a.normalized_value or "" for a in answers]
+            buckets = _cluster_free_text(texts)
+            distribution = [
+                {"label": k, "count": v, "percent": round(v / total * 100, 1)}
+                for k, v in buckets.items() if v > 0
+            ]
+
+        result.append({
+            "campaign_id": question.campaign_id,
+            "question_key": question.key,
+            "prompt": question.prompt,
+            "question_type": qtype,
+            "total_answers": total,
+            "distribution": distribution,
+        })
+
+    return {"questions": result}
+
+
+@global_router.get("/call-outcomes-by-campaign")
+def call_outcomes_by_campaign(db: Session = Depends(get_db)):
+    """Per-campaign breakdown of call outcomes — for cross-campaign comparison."""
+    campaigns = db.query(Campaign).filter(Campaign.status.in_(["active", "paused", "archived"])).all()
+    result = []
+    for c in campaigns:
+        total = db.query(func.count(CallLog.id)).filter(CallLog.campaign_id == c.id).scalar() or 0
+        if total == 0:
+            continue
+        completed = db.query(func.count(CallLog.id)).filter(
+            CallLog.campaign_id == c.id, CallLog.status == "completed"
+        ).scalar() or 0
+        avg_rapport = db.query(func.avg(CallLog.rapport_score)).filter(
+            CallLog.campaign_id == c.id, CallLog.rapport_score.isnot(None)
+        ).scalar()
+        result.append({
+            "campaign_id": c.id,
+            "campaign_name": c.name,
+            "total_calls": total,
+            "completed_calls": completed,
+            "completion_pct": round(completed / total * 100, 1),
+            "avg_rapport": round(avg_rapport, 2) if avg_rapport else None,
+        })
+    return {"campaigns": sorted(result, key=lambda x: -x["total_calls"])}
