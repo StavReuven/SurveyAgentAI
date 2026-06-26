@@ -11,6 +11,13 @@ from .agent.service import AgentAIService
 from .dialogue.fallbacks import FallbackConfig
 from .dialogue.fsm import DialogueAction, FSMContext, QuestionContext
 from .dialogue.transitions import DialogueManager
+from .escalation import (
+    EscalationConfig,
+    EscalationSnapshot,
+    compute_score,
+    evaluate as evaluate_escalation,
+    get_escalation_queue,
+)
 from .mirroring.features import FeatureExtractor
 from .mirroring.policy import MirroringDecision, MirroringPolicy, MirroringSettings
 from .nlu.classifier import RuleBasedClassifier
@@ -36,6 +43,7 @@ class TurnResult:
     session_complete: bool
     mirroring_decision: MirroringDecision | None = None   # SAA-74
     agent_decision: dict | None = None                    # AgentAI structured output
+    escalation_snapshot: EscalationSnapshot | None = None  # SAA-84
 
 
 @dataclass
@@ -72,6 +80,7 @@ class VoicePipeline:
         self._feature_extractor = FeatureExtractor()
         self._mirroring_policy = MirroringPolicy(mirroring_settings)
         self._agent: AgentAIService | None = agent_service
+        self._escalation_config = EscalationConfig()
 
     # -----------------------------------------------------------------------
     # Session lifecycle
@@ -202,6 +211,38 @@ class VoicePipeline:
         rapport = self._compute_rapport(ctx)
         mirroring = self._mirroring_policy.compute(ctx.mirroring_calibration, rapport)
 
+        # --- SAA-84: Escalation triggers ---
+        escalation_snapshot: EscalationSnapshot | None = None
+        # Log agent intent so the streak counter can read it
+        if agent_decision:
+            ctx.history[-1]["agent_intent"] = agent_decision.intent.value
+        escalation_reason = evaluate_escalation(ctx, agent_decision, rapport, self._escalation_config)
+        if escalation_reason is not None:
+            q = ctx.current_question
+            cal = ctx.mirroring_calibration
+            hesitation = cal.smoothed.hesitation_rate if cal.smoothed else 0.0
+            urgency = compute_score(
+                escalation_reason,
+                rapport=rapport,
+                hesitation_rate=hesitation,
+                answers_completed=len(ctx.answers),
+                total_questions=len(ctx.questions) or 1,
+            )
+            escalation_snapshot = EscalationSnapshot(
+                session_id=ctx.session_id,
+                campaign_id=ctx.campaign_id,
+                participant_phone=ctx.participant_phone,
+                reason=escalation_reason,
+                current_question_key=q.question_key if q else None,
+                current_question_prompt=q.prompt if q else None,
+                answers_so_far=dict(ctx.answers),
+                history=list(ctx.history),
+                mirroring_snapshot=cal.to_dict(),
+                rapport_score=rapport,
+                urgency_score=urgency,
+            )
+            get_escalation_queue().push(escalation_snapshot)
+
         # --- TTS (with mirroring adjustments) ---
         tts_m = TTSMetrics()
         audio = await self._synthesise(response_text, ctx, mirroring=mirroring)
@@ -225,6 +266,7 @@ class VoicePipeline:
             session_complete=session_complete,
             mirroring_decision=mirroring,
             agent_decision=agent_decision.to_dict() if agent_decision else None,
+            escalation_snapshot=escalation_snapshot,
         )
 
     # -----------------------------------------------------------------------

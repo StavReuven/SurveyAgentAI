@@ -4,3 +4,5 @@ sqlalchemy==2.0.38
 pydantic==2.10.6
 python-multipart==0.0.20
 anthropic>=0.40.0
+twilio>=9.0.0
+python-dotenv>=1.0.0

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>קונסול מנהל - VoiceSurvey AI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .badge-reason { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; }
+    .reason-profanity        { background:#fee2e2; color:#b91c1c; }
+    .reason-angry_caller     { background:#ffedd5; color:#c2410c; }
+    .reason-high_distress    { background:#fef9c3; color:#92400e; }
+    .reason-agent_requested  { background:#dbeafe; color:#1e40af; }
+    .reason-repeated_unclear { background:#f3e8ff; color:#7e22ce; }
+    .reason-max_retries      { background:#f1f5f9; color:#475569; }
+    .reason-low_rapport      { background:#ecfdf5; color:#065f46; }
+
+    .score-bar  { height:8px; border-radius:4px; background:#e2e8f0; margin-top:4px; }
+    .score-fill { height:100%; border-radius:4px; background:linear-gradient(90deg,#3b82f6,#ef4444); }
+
+    .session-card { border:1px solid var(--border); border-radius:10px; padding:16px; background:white; margin-bottom:12px; }
+    .session-card.taken-over { border-color:#f59e0b; background:#fffbeb; }
+
+    .transcript-box { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:12px; max-height:220px; overflow-y:auto; font-size:13px; direction:rtl; }
+    .msg-agent  { color:#1e40af; margin-bottom:6px; }
+    .msg-caller { color:#1e293b; margin-bottom:6px; font-weight:500; }
+
+    .actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; justify-content:flex-end; }
+    .btn-takeover { background:#f59e0b; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
+    .btn-return   { background:#10b981; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
+    .btn-hangup   { background:#ef4444; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
+
+    .operator-bar { display:flex; align-items:center; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
+    .operator-bar label { font-size:13px; color:var(--text-muted); }
+    .operator-bar input { padding:7px 10px; border:1px solid var(--border); border-radius:7px; font-size:13px; width:160px; font-family:inherit; }
+
+    .queue-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    .empty-state  { text-align:center; padding:60px 20px; color:var(--text-muted); font-size:15px; }
+
+    .card-meta { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; }
+    .card-phone { font-size:14px; font-weight:600; }
+    .card-time  { font-size:12px; color:var(--text-muted); }
+    .card-question { margin-top:8px; font-size:13px; color:var(--text-muted); }
+  </style>
+</head>
+<body>
+
+<header class="top-header">
+  <div class="header-right">
+    <div class="logo-title">VoiceSurvey AI</div>
+    <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
+  </div>
+
+  <nav class="nav-tabs">
+    <a href="/static/dashboard.html" class="nav-tab">דשבורד</a>
+    <a href="/static/index.html" class="nav-tab">ניהול סקרים</a>
+    <a href="/static/voice.html" class="nav-tab">שיחות חיות</a>
+    <a href="/static/operator.html" class="nav-tab active">קונסול מנהל</a>
+    <a href="#" class="nav-tab">אנליטיקה</a>
+    <a href="#" class="nav-tab">הגדרות</a>
+  </nav>
+
+  <div class="header-left">
+    <div class="top-badge" id="queue-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;">תור: 0</div>
+  </div>
+</header>
+
+<div class="page-container">
+  <div class="page-header">
+    <div class="page-title">
+      <h1>קונסול מנהל — תור התערבות</h1>
+      <p>שיחות ממוינות לפי דחיפות — השתלט או החזר לסוכן</p>
+    </div>
+  </div>
+
+  <!-- Info banner -->
+  <div class="card" style="background:#fef3c7;padding:12px 20px;border-color:#fde68a;color:#92400e;display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+    <b>🎧 מנהל אנושי בלולאה</b>
+    <span style="font-size:14px;">שיחות שהסוכן לא הצליח לטפל בהן מועברות לתור זה לפי דחיפות. לחץ "השתלט" כדי להתחבר לשיחה.</span>
+  </div>
+
+  <div class="operator-bar">
+    <label>מזהה מנהל:</label>
+    <input id="operator-id" type="text" value="operator-1" />
+    <button onclick="loadQueue()" class="btn-primary" style="padding:7px 16px;font-size:13px;">רענן</button>
+    <label style="margin-right:8px;">
+      <input type="checkbox" id="auto-refresh" checked onchange="toggleAutoRefresh(this)"> רענון אוטומטי כל 5 שניות
+    </label>
+    <span id="last-refresh" style="font-size:12px;color:var(--text-muted);margin-right:auto;"></span>
+  </div>
+
+  <div class="queue-header">
+    <h2 style="font-size:17px;">תור הסלמה</h2>
+  </div>
+
+  <div id="queue-list"></div>
+</div>
+
+<script>
+const BASE = '';
+let refreshTimer = null;
+
+function operatorId() {
+  return document.getElementById('operator-id').value.trim() || 'operator-1';
+}
+
+async function loadQueue() {
+  const res = await fetch(`${BASE}/api/operator/queue`);
+  const data = await res.json();
+  const count = data.count || 0;
+  document.getElementById('queue-badge').textContent = `תור: ${count}`;
+  renderQueue(data.sessions || []);
+  document.getElementById('last-refresh').textContent = `עדכון אחרון: ${new Date().toLocaleTimeString('he-IL')}`;
+}
+
+function renderQueue(sessions) {
+  const el = document.getElementById('queue-list');
+  if (!sessions.length) {
+    el.innerHTML = '<div class="empty-state">✅ אין שיחות הממתינות להתערבות — הכל תקין!</div>';
+    return;
+  }
+  el.innerHTML = sessions.map(s => sessionCard(s)).join('');
+}
+
+const REASON_LABELS = {
+  profanity:        'קללות',
+  angry_caller:     'כועס',
+  high_distress:    'מצוקה',
+  agent_requested:  'ביקש אנושי',
+  repeated_unclear: 'לא מובן ×N',
+  max_retries:      'ניסיונות מקס',
+  low_rapport:      'אות חלש',
+};
+
+function reasonBadge(reason) {
+  const label = REASON_LABELS[reason] || reason;
+  return `<span class="badge-reason reason-${reason}">${label}</span>`;
+}
+
+function scoreBar(score) {
+  const pct = Math.min(100, (score / 15) * 100);
+  return `
+    <div style="margin-top:6px;">
+      <span style="font-size:11px;color:var(--text-muted);">דחיפות: ${score.toFixed(1)}</span>
+      <div class="score-bar"><div class="score-fill" style="width:${pct}%"></div></div>
+    </div>`;
+}
+
+function transcriptHtml(history) {
+  if (!history || !history.length) return '<em style="color:var(--text-muted)">אין תמליל</em>';
+  return history.slice(-10).map(e => {
+    if (e.event === 'caller_input' && e.text)
+      return `<div class="msg-caller">👤 ${e.text}</div>`;
+    if (e.event === 'bot_response' && e.text)
+      return `<div class="msg-agent">🤖 ${e.text}</div>`;
+    return '';
+  }).join('');
+}
+
+function sessionCard(s) {
+  const takenOver = !!s.operator_id;
+  const time = new Date(s.triggered_at).toLocaleTimeString('he-IL');
+  return `
+  <div class="session-card ${takenOver ? 'taken-over' : ''}" id="card-${s.session_id}">
+    <div class="card-meta">
+      <div>
+        <span class="card-phone">${s.participant_phone}</span>
+        <span style="font-size:12px;color:var(--text-muted);margin-right:8px;">${s.session_id.substring(0,8)}…</span>
+        <span style="margin-right:6px;">${reasonBadge(s.reason)}</span>
+        ${takenOver ? `<span style="font-size:12px;color:#f59e0b;font-weight:600;margin-right:6px;">🎧 ${s.operator_id}</span>` : ''}
+      </div>
+      <span class="card-time">${time}</span>
+    </div>
+
+    ${scoreBar(s.urgency_score)}
+
+    ${s.current_question_prompt
+      ? `<div class="card-question">שאלה נוכחית: ${s.current_question_prompt}</div>`
+      : ''}
+
+    <div style="margin-top:10px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">תמליל שיחה (10 שורות אחרונות):</div>
+      <div class="transcript-box">${transcriptHtml(s.history)}</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn-hangup"  onclick="hangup('${s.session_id}')">📵 נתק שיחה</button>
+      ${takenOver
+        ? `<button class="btn-return"   onclick="returnToAgent('${s.session_id}')">🤖 החזר לסוכן</button>`
+        : `<button class="btn-takeover" onclick="takeover('${s.session_id}')">🎧 השתלט</button>`}
+    </div>
+  </div>`;
+}
+
+async function takeover(sessionId) {
+  const res = await fetch(`${BASE}/api/operator/sessions/${sessionId}/takeover`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({operator_id: operatorId()}),
+  });
+  if (!res.ok) { alert((await res.json()).detail); return; }
+  await loadQueue();
+}
+
+async function returnToAgent(sessionId) {
+  await fetch(`${BASE}/api/operator/sessions/${sessionId}/return`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({operator_id: operatorId()}),
+  });
+  await loadQueue();
+}
+
+async function hangup(sessionId) {
+  if (!confirm('לנתק את השיחה?')) return;
+  await fetch(`${BASE}/api/operator/sessions/${sessionId}/hangup`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({operator_id: operatorId()}),
+  });
+  await loadQueue();
+}
+
+function toggleAutoRefresh(cb) {
+  if (cb.checked) refreshTimer = setInterval(loadQueue, 5000);
+  else { clearInterval(refreshTimer); refreshTimer = null; }
+}
+
+loadQueue();
+refreshTimer = setInterval(loadQueue, 5000);
+</script>
+</body>
+</html>
