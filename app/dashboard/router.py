@@ -113,9 +113,7 @@ def get_kpis(
     # Average call duration in seconds (completed calls with ended_at set)
     avg_duration_seconds = (
         db.query(
-            func.avg(
-                (func.julianday(CallLog.ended_at) - func.julianday(CallLog.started_at)) * 86400
-            )
+            func.avg(func.extract("epoch", CallLog.ended_at - CallLog.started_at))
         )
         .filter(CallLog.ended_at.isnot(None))
         .scalar()
@@ -190,7 +188,7 @@ def get_calls_by_hour(
 
     rows = (
         q.with_entities(
-            func.strftime("%H:00", CallLog.started_at).label("hour"),
+            func.to_char(CallLog.started_at, "HH24:00").label("hour"),
             func.count(CallLog.id).label("count"),
         )
         .group_by("hour")
