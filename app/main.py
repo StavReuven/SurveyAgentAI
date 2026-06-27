@@ -1127,6 +1127,24 @@ async def process_voice_turn(
             }
         ctx.state = DialogueState.ASKING
         ctx.retry_count = 0
+        # Return the current question directly — skip the full pipeline so
+        # the [resume] text does not trigger a fresh escalation evaluation.
+        current_q = ctx.current_question
+        resume_text = current_q.prompt if current_q else (
+            "נמשיך בסקר." if getattr(ctx, "_language", "en").startswith("he") else "Let's continue the survey."
+        )
+        return {
+            "session_id": session_id,
+            "response_text": resume_text,
+            "dialogue_action": "speak_question",
+            "current_state": ctx.state,
+            "current_question_key": current_q.question_key if current_q else None,
+            "session_complete": False,
+            "stt_metrics": None,
+            "tts_metrics": None,
+            "mirroring": None,
+            "escalation_snapshot": None,
+        }
 
     # Wrap the provided transcript as an async generator of bytes so the
     # STT adapter's interface is satisfied (mock adapter ignores audio bytes
