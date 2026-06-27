@@ -39,7 +39,7 @@ from .voice.dialogue.fsm import QuestionContext
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
 from .voice.escalation import get_escalation_queue
 from .voice.pipeline import VoicePipeline
-from .analytics.router import router as analytics_router
+from .analytics.router import router as analytics_router, global_router as analytics_global_router
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .operator.router import router as operator_router
 from .telephony.router import router as telephony_router
@@ -106,6 +106,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0", lifespan=lifespan)
 app.include_router(analytics_router)
+app.include_router(analytics_global_router)
 app.include_router(dashboard_router)
 app.include_router(operator_router)
 app.include_router(telephony_router)
