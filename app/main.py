@@ -1190,15 +1190,18 @@ async def process_voice_turn(
         # Full conversation history for audit / dashboard replay
         call_log.history = list(ctx.history)
 
+        action = result.dialogue_action.value
+        # Mark escalated in DB immediately — session stays open for operator takeover
+        if "escalat" in action:
+            call_log.status = "escalated"
+
         if result.session_complete:
             call_log.ended_at = datetime.now(timezone.utc)
-            action = result.dialogue_action.value  # use .value so string checks are reliable
-            if "escalat" in action:
-                call_log.status = "escalated"
-            elif "closing" in action or "end" in action:
-                call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
-            else:
-                call_log.status = "completed"
+            if "escalat" not in action:
+                if "closing" in action or "end" in action:
+                    call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
+                else:
+                    call_log.status = "completed"
             # Remove from operator queue if the agent closed the call naturally
             # (escalated sessions stay until the operator explicitly handles them)
             if call_log.status != "escalated":
