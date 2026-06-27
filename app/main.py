@@ -1215,7 +1215,9 @@ async def process_voice_turn(
 
         if result.session_complete:
             call_log.ended_at = datetime.now(timezone.utc)
-            if "escalat" not in action:
+            # Once escalated, keep that status permanently so the dashboard
+            # "requires intervention" count reflects all calls that ever needed it.
+            if "escalat" not in action and call_log.status != "escalated":
                 if "closing" in action or "end" in action:
                     call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
                 else:
