@@ -1213,18 +1213,23 @@ async def process_voice_turn(
         if "escalat" in action:
             call_log.status = "escalated"
 
+        # True if this call ever triggered escalation (checked via in-memory history)
+        call_was_escalated = any(e.get("event") == "escalate" for e in ctx.history)
+
         if result.session_complete:
             call_log.ended_at = datetime.now(timezone.utc)
-            # Once escalated, keep that status permanently so the dashboard
-            # "requires intervention" count reflects all calls that ever needed it.
-            if "escalat" not in action and call_log.status != "escalated":
+            # Once a call required intervention, keep "escalated" as the final status
+            # so the dashboard cumulative count never drops.
+            if not call_was_escalated and "escalat" not in action:
                 if "closing" in action or "end" in action:
                     call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
                 else:
                     call_log.status = "completed"
+            elif call_was_escalated:
+                call_log.status = "escalated"
             # Remove from operator queue if the agent closed the call naturally
             # (escalated sessions stay until the operator explicitly handles them)
-            if call_log.status != "escalated":
+            if not call_was_escalated:
                 get_escalation_queue().remove(session_id)
         db.commit()
 
