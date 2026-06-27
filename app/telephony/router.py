@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 from twilio.twiml.voice_response import VoiceResponse, Gather
 
 from ..database import get_db
+from .conference import (
+    conference_name_for,
+    generate_access_token,
+    is_webrtc_configured,
+)
 from .config import TWILIO_WEBHOOK_BASE_URL
 from .gateway import get_gateway
 from .persistence import save_call_log
@@ -230,3 +235,46 @@ async def list_active_calls():
             for s in active
         ]
     }
+
+
+# ── WebRTC / Conference endpoints ──────────────────────────────────────────
+
+@router.get("/token")
+async def get_access_token(identity: str = "operator"):
+    """Return a Twilio Access Token for the browser Twilio.Device (Voice SDK).
+
+    The token grants the holder permission to make outgoing calls through
+    the configured TwiML App, which routes them to a Conference room.
+    """
+    if not is_webrtc_configured():
+        return {
+            "token": None,
+            "configured": False,
+            "message": "Twilio WebRTC not configured — set TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID in .env",
+        }
+    token = generate_access_token(identity)
+    return {"token": token, "configured": True, "identity": identity}
+
+
+@router.post("/conference-twiml", response_class=Response)
+async def conference_twiml(room: str = Query(...)):
+    """TwiML App Voice URL — called by Twilio when browser Device.connect() fires.
+
+    Also used to redirect a live caller into the same Conference room.
+    Both the browser and the original caller end up in <Conference name=room>.
+    """
+    from twilio.twiml.voice_response import VoiceResponse, Dial, Conference as TwiConference
+
+    vr = VoiceResponse()
+    dial = Dial()
+    # startConferenceOnEnter=True so operator can enter even if caller hasn't joined yet
+    # endConferenceOnExit=True on operator side so hanging up ends the conference
+    dial.conference(
+        room,
+        start_conference_on_enter=True,
+        end_conference_on_exit=True,
+        beep=False,
+        wait_url="",          # silence instead of hold music
+    )
+    vr.append(dial)
+    return Response(content=str(vr), media_type="application/xml")

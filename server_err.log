@@ -1,0 +1,353 @@
+INFO:     Will watch for changes in these directories: ['D:\\stav\\university\\year3\\SurveyAI\\SurveyAgentAI']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [27888] using WatchFiles
+INFO:     Started server process [27540]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 50563) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50588) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50589) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 50613) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=operator" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50614) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=operator" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50616) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=operator" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50618) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 50631) - "WebSocket /ws/call/c9a0562a-bfd8-4cb4-994b-0dc7fec922e5?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 50633) - "WebSocket /ws/call/ca868fe3-dc8a-4e47-a15d-01227f5d390e?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50636) - "WebSocket /ws/call/ca868fe3-dc8a-4e47-a15d-01227f5d390e?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+WARNING:  WatchFiles detected changes in 'app\voice\agent\prompt.py'. Reloading...
+INFO:     Shutting down
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [27540]
+WARNING:  WatchFiles detected changes in 'app\voice\agent\prompt.py'. Reloading...
+INFO:     Started server process [17448]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    Traceback (most recent call last):
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "d:\stav\university\year3\SurveyAI\SurveyAgentAI\.venv\Lib\site-packages\starlette\routing.py", line 700, in lifespan
+    await receive()
+  File "d:\stav\university\year3\SurveyAI\SurveyAgentAI\.venv\Lib\site-packages\uvicorn\lifespan\on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\queues.py", line 186, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+INFO:     Started server process [29464]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 50775) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     ('127.0.0.1', 50774) - "WebSocket /ws/call/ca868fe3-dc8a-4e47-a15d-01227f5d390e?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection open
+INFO:     ('127.0.0.1', 50868) - "WebSocket /ws/call/1a8b2a59-0d39-4e67-9435-35d9d9d9b585?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50869) - "WebSocket /ws/call/1a8b2a59-0d39-4e67-9435-35d9d9d9b585?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+WARNING:  WatchFiles detected changes in 'app\main.py'. Reloading...
+INFO:     ('127.0.0.1', 50892) - "WebSocket /ws/call/4c28c0a4-3c64-4b84-8b1e-447157ce6452?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50893) - "WebSocket /ws/call/4c28c0a4-3c64-4b84-8b1e-447157ce6452?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 50935) - "WebSocket /ws/call/a15aae09-2c45-4d98-ba6e-0387778fb982?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 50936) - "WebSocket /ws/call/a15aae09-2c45-4d98-ba6e-0387778fb982?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Shutting down
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [29464]
+INFO:     Started server process [31572]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 50946) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     ('127.0.0.1', 50945) - "WebSocket /ws/call/ca868fe3-dc8a-4e47-a15d-01227f5d390e?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection open
+WARNING:  WatchFiles detected changes in 'app\voice\agent\fallback.py'. Reloading...
+INFO:     ('127.0.0.1', 51050) - "WebSocket /ws/call/b3412a62-9ad4-431a-84dd-b8db69869dd1?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51051) - "WebSocket /ws/call/b3412a62-9ad4-431a-84dd-b8db69869dd1?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Shutting down
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [31572]
+WARNING:  WatchFiles detected changes in 'app\voice\agent\service.py'. Reloading...
+INFO:     Started server process [26388]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    Traceback (most recent call last):
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "d:\stav\university\year3\SurveyAI\SurveyAgentAI\.venv\Lib\site-packages\starlette\routing.py", line 700, in lifespan
+    await receive()
+  File "d:\stav\university\year3\SurveyAI\SurveyAgentAI\.venv\Lib\site-packages\uvicorn\lifespan\on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\queues.py", line 186, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+INFO:     Started server process [12832]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 51090) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     ('127.0.0.1', 51091) - "WebSocket /ws/call/ca868fe3-dc8a-4e47-a15d-01227f5d390e?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection open
+WARNING:  WatchFiles detected changes in 'app\main.py'. Reloading...
+INFO:     Shutting down
+INFO:     connection closed
+INFO:     connection closed
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [12832]
+INFO:     Started server process [23332]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 51111) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     ('127.0.0.1', 51112) - "WebSocket /ws/call/ca868fe3-dc8a-4e47-a15d-01227f5d390e?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection open
+WARNING:  WatchFiles detected changes in 'app\voice\pipeline.py'. Reloading...
+INFO:     ('127.0.0.1', 51157) - "WebSocket /ws/call/2da290a0-b82d-4cae-8289-5e1bc21e3152?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51158) - "WebSocket /ws/call/2da290a0-b82d-4cae-8289-5e1bc21e3152?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51251) - "WebSocket /ws/call/23cf48a1-6b03-4251-aaad-2053d739c25e?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51256) - "WebSocket /ws/call/ec5da57e-9a56-45ce-b46b-2328db2373c6?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51258) - "WebSocket /ws/call/23cf48a1-6b03-4251-aaad-2053d739c25e?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51261) - "WebSocket /ws/call/23cf48a1-6b03-4251-aaad-2053d739c25e?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51361) - "WebSocket /ws/call/558ed053-1b5e-45e9-803c-c65df49d16df?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51365) - "WebSocket /ws/call/558ed053-1b5e-45e9-803c-c65df49d16df?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51371) - "WebSocket /ws/call/4dabac65-c3f9-42d8-87fa-0a067f27cd7a?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51473) - "WebSocket /ws/call/6b50c3f3-1688-4c01-8e42-07a843530cb1?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51475) - "WebSocket /ws/call/23cf48a1-6b03-4251-aaad-2053d739c25e?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51484) - "WebSocket /ws/call/6b50c3f3-1688-4c01-8e42-07a843530cb1?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+WARNING:  WatchFiles detected changes in 'app\voice\escalation\scoring.py', 'app\voice\pipeline.py', 'app\voice\agent\service.py', 'app\main.py'. Reloading...
+INFO:     Started server process [31044]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    Traceback (most recent call last):
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "d:\stav\university\year3\SurveyAI\SurveyAgentAI\.venv\Lib\site-packages\starlette\routing.py", line 700, in lifespan
+    await receive()
+  File "d:\stav\university\year3\SurveyAI\SurveyAgentAI\.venv\Lib\site-packages\uvicorn\lifespan\on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\sagi_\AppData\Local\Programs\Python\Python313\Lib\asyncio\queues.py", line 186, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+INFO:     Started server process [21196]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 51524) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     ('127.0.0.1', 51525) - "WebSocket /ws/call/6b50c3f3-1688-4c01-8e42-07a843530cb1?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection open
+INFO:     ('127.0.0.1', 51532) - "WebSocket /ws/call/7155aa30-7aec-4343-b6d1-021a019014f5?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51536) - "WebSocket /ws/call/7155aa30-7aec-4343-b6d1-021a019014f5?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51542) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51546) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51550) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51551) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51557) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51561) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51565) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51566) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51572) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51576) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51580) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51581) - "WebSocket /ws/call/805b1e36-4fba-47af-9308-61b1baeb3423?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+WARNING:  WatchFiles detected changes in 'app\voice\pipeline.py'. Reloading...
+INFO:     Started server process [30928]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     ('127.0.0.1', 51589) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     ('127.0.0.1', 51590) - "WebSocket /ws/call/6b50c3f3-1688-4c01-8e42-07a843530cb1?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection open
+INFO:     ('127.0.0.1', 51608) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51612) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51616) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51617) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51623) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51627) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51631) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51632) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51638) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51642) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51646) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=caller" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51647) - "WebSocket /ws/call/1b9e0f92-fd3c-43e4-9fa8-ab6c98c38805?role=operator" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:     ('127.0.0.1', 52086) - "WebSocket /ws/call/68b8b622-7277-4394-8251-7a430917ab21?role=caller" [accepted]
+INFO:     connection open

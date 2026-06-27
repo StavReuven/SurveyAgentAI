@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from time import time
 from typing import AsyncIterator
 
+from .agent.schema import AgentIntent
 from .agent.service import AgentAIService
 from .dialogue.fallbacks import FallbackConfig
 from .dialogue.fsm import DialogueAction, FSMContext, QuestionContext
@@ -21,6 +22,7 @@ from .escalation import (
 from .mirroring.features import FeatureExtractor
 from .mirroring.policy import MirroringDecision, MirroringPolicy, MirroringSettings
 from .nlu.classifier import RuleBasedClassifier
+from .nlu.schema import IntentType
 from .stt.adapter import MockSTTAdapter, STTAdapter, STTConfig
 from .stt.metrics import STTMetrics
 from .tts.adapter import AudioData, MockTTSAdapter, TTSAdapter, TTSRequest
@@ -94,12 +96,16 @@ class VoicePipeline:
         branch_rules: list,
         language: str = "en",
         locale: str | None = None,
+        campaign_name: str = "",
+        campaign_description: str = "",
     ) -> FSMContext:
         session_id = str(uuid.uuid4())
         ctx = FSMContext(
             session_id=session_id,
             campaign_id=campaign_id,
             participant_phone=participant_phone,
+            campaign_name=campaign_name,
+            campaign_description=campaign_description,
             questions=questions,
             branch_rules=branch_rules,
         )
@@ -161,6 +167,9 @@ class VoicePipeline:
                 history=ctx.history,
                 language=language,
                 next_question=next_q,
+                campaign_name=getattr(ctx, "campaign_name", ""),
+                campaign_description=getattr(ctx, "campaign_description", ""),
+                all_questions=ctx.questions,
             )
             intent = agent_decision.to_nlu_intent()
         else:
@@ -169,24 +178,42 @@ class VoicePipeline:
 
         # Log caller transcript (include confidence for rapport + mirroring)
         ctx.log("caller_input", text=final_text, confidence=confidence)
+        # Tag intent on the caller_input entry NOW so _count_unclear_streak can find it.
+        # Must happen before _dm.process() appends more history entries.
+        if agent_decision:
+            ctx.history[-1]["agent_intent"] = agent_decision.intent.value
+        elif intent.intent_type == IntentType.UNKNOWN:
+            ctx.history[-1]["agent_intent"] = AgentIntent.UNCLEAR.value
 
         # --- Dialogue ---
-        ctx, action, response_text = self._dm.process(ctx, intent)
+        # Short-circuit FSM for CONVERSATIONAL turns (navigation questions, small talk,
+        # pace requests, etc.) so retry_count is never incremented for non-answer turns.
+        if agent_decision and agent_decision.intent == AgentIntent.CONVERSATIONAL:
+            action = DialogueAction.SPEAK_QUESTION
+            response_text = agent_decision.response_text
+        else:
+            ctx, action, response_text = self._dm.process(ctx, intent)
 
-        # Response text merging:
-        # - SPEAK_QUESTION + agent has a full transition → use agent text only
-        #   (agent already acknowledged the answer AND introduced the next question)
-        # - SPEAK_QUESTION + agent only has short ack → prepend to FSM question text
-        # - Any other action → use agent text (errors, clarification, opt-out, etc.)
-        if agent_decision and agent_decision.response_text:
-            if action == DialogueAction.SPEAK_QUESTION:
-                # If agent built a full transition (includes next question intro), skip FSM text
-                if next_q and len(agent_decision.response_text) > 40:
-                    response_text = agent_decision.response_text
+            # If the agent explicitly chose to escalate, override the FSM action so
+            # the session is properly closed and the escalation snapshot is surfaced.
+            if agent_decision and agent_decision.intent == AgentIntent.ESCALATE:
+                action = DialogueAction.ESCALATE
+
+            # Response text merging:
+            # - SPEAK_QUESTION + agent has a full transition → use agent text only
+            #   (agent already acknowledged the answer AND introduced the next question)
+            # - SPEAK_QUESTION + agent only has short ack → prepend to FSM question text
+            # - Any other action → use agent text (errors, clarification, opt-out, etc.)
+            if agent_decision and agent_decision.response_text:
+                if action == DialogueAction.SPEAK_QUESTION:
+                    # If agent built a full transition (includes next question intro), skip FSM text
+                    if next_q and len(agent_decision.response_text) > 40:
+                        response_text = agent_decision.response_text
+                    else:
+                        response_text = f"{agent_decision.response_text} {response_text}"
                 else:
-                    response_text = f"{agent_decision.response_text} {response_text}"
-            else:
-                response_text = agent_decision.response_text
+                    response_text = agent_decision.response_text
+
         ctx.log("bot_response", action=str(action), text=response_text)
 
         # --- SAA-70: Feature extraction + calibration ---
@@ -213,9 +240,7 @@ class VoicePipeline:
 
         # --- SAA-84: Escalation triggers ---
         escalation_snapshot: EscalationSnapshot | None = None
-        # Log agent intent so the streak counter can read it
-        if agent_decision:
-            ctx.history[-1]["agent_intent"] = agent_decision.intent.value
+        prior_escalations = sum(1 for e in ctx.history if e.get("event") == "escalate")
         escalation_reason = evaluate_escalation(ctx, agent_decision, rapport, self._escalation_config)
         if escalation_reason is not None:
             q = ctx.current_question
@@ -227,7 +252,10 @@ class VoicePipeline:
                 hesitation_rate=hesitation,
                 answers_completed=len(ctx.answers),
                 total_questions=len(ctx.questions) or 1,
+                prior_escalations=prior_escalations,
             )
+            ctx.log("escalate", reason=escalation_reason.value, urgency=urgency,
+                    prior_escalations=prior_escalations)
             escalation_snapshot = EscalationSnapshot(
                 session_id=ctx.session_id,
                 campaign_id=ctx.campaign_id,

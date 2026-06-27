@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class CampaignBase(BaseModel):
     name: str = Field(min_length=2, max_length=200)
+    description: str | None = Field(default=None)
     language: str = Field(default="en", max_length=16)
     timezone: str = Field(default="UTC", max_length=64)
     consent_text: str = Field(min_length=5)
@@ -16,6 +17,7 @@ class CampaignCreate(CampaignBase):
 
 class CampaignUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
+    description: str | None = None
     language: str | None = Field(default=None, max_length=16)
     timezone: str | None = Field(default=None, max_length=64)
     consent_text: str | None = Field(default=None, min_length=5)

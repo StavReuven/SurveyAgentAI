@@ -61,6 +61,8 @@ class FSMContext:
     session_id: str
     campaign_id: int
     participant_phone: str
+    campaign_name: str = ""
+    campaign_description: str = ""
 
     state: DialogueState = DialogueState.GREETING
     current_question_index: int = 0       # index into ordered questions list

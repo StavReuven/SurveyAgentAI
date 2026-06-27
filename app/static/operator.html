@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <title>קונסול מנהל - VoiceSurvey AI</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <!-- Twilio Voice SDK for WebRTC operator audio -->
+  <script src="https://sdk.twilio.com/js/voice/releases/2.11.1/twilio.min.js"></script>
   <style>
     .badge-reason { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; }
     .reason-profanity        { background:#fee2e2; color:#b91c1c; }
@@ -17,17 +19,65 @@
     .score-bar  { height:8px; border-radius:4px; background:#e2e8f0; margin-top:4px; }
     .score-fill { height:100%; border-radius:4px; background:linear-gradient(90deg,#3b82f6,#ef4444); }
 
-    .session-card { border:1px solid var(--border); border-radius:10px; padding:16px; background:white; margin-bottom:12px; }
+    .session-card { border:1px solid var(--border); border-radius:10px; padding:16px; background:white; margin-bottom:12px; transition: border-color 0.2s; }
     .session-card.taken-over { border-color:#f59e0b; background:#fffbeb; }
+    .session-card.in-call    { border-color:#10b981; background:#f0fdf4; box-shadow: 0 0 0 3px #bbf7d0; }
 
     .transcript-box { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:12px; max-height:220px; overflow-y:auto; font-size:13px; direction:rtl; }
     .msg-agent  { color:#1e40af; margin-bottom:6px; }
     .msg-caller { color:#1e293b; margin-bottom:6px; font-weight:500; }
 
-    .actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; justify-content:flex-end; }
+    .actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; justify-content:flex-end; align-items:center; }
     .btn-takeover { background:#f59e0b; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
     .btn-return   { background:#10b981; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
     .btn-hangup   { background:#ef4444; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
+    .btn-mute     { background:#6366f1; color:white; border:none; padding:7px 16px; border-radius:7px; cursor:pointer; font-size:13px; font-family:inherit; }
+    .btn-mute.muted { background:#94a3b8; }
+
+    /* Live call audio panel */
+    .audio-panel {
+      display: flex; align-items: center; gap:10px;
+      background: #f0fdf4; border: 1px solid #86efac;
+      border-radius: 8px; padding: 10px 14px; margin-top: 10px;
+      font-size: 13px;
+    }
+    .audio-status { font-weight: 600; color: #16a34a; display: flex; align-items: center; gap:6px; }
+    .pulse { width:10px; height:10px; border-radius:50%; background:#16a34a; animation: pulse 1.2s infinite; flex-shrink:0; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+
+    .demo-note { background:#fef9c3; border:1px solid #fde68a; border-radius:7px; padding:8px 12px; font-size:12px; color:#92400e; margin-top:8px; }
+
+    /* Demo chat panel — operator speaks to caller */
+    .chat-panel {
+      margin-top: 12px; border: 2px solid #10b981;
+      border-radius: 10px; overflow: hidden; background: #f0fdf4;
+    }
+    .chat-panel-header {
+      background: #10b981; color: white; padding: 8px 14px;
+      font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+    }
+    .chat-panel-messages {
+      max-height: 160px; overflow-y: auto; padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 6px; font-size: 13px;
+    }
+    .op-msg-out { color: #166534; font-weight: 500; }
+    .op-msg-in  { color: #1e40af; }
+    .chat-panel-input {
+      display: flex; gap: 6px; padding: 8px 10px;
+      border-top: 1px solid #86efac; background: white;
+    }
+    .chat-panel-input input {
+      flex:1; padding: 7px 12px; border: 1px solid #d1fae5;
+      border-radius: 20px; font-size: 13px; font-family: inherit; outline: none;
+      direction: rtl;
+    }
+    .btn-op-send { background:#10b981; color:white; border:none; padding:7px 14px; border-radius:20px; cursor:pointer; font-size:13px; font-family:inherit; }
+    .btn-op-mic  { background:#3b82f6; color:white; border:none; width:34px; height:34px; border-radius:50%; cursor:pointer; font-size:15px; flex-shrink:0; }
+    .btn-op-mic.rec { background:#ef4444; animation: pulse 0.8s infinite; }
+
+    .webrtc-status { font-size:12px; padding:4px 10px; border-radius:12px; }
+    .webrtc-ok   { background:#dcfce7; color:#16a34a; }
+    .webrtc-off  { background:#fee2e2; color:#b91c1c; }
 
     .operator-bar { display:flex; align-items:center; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
     .operator-bar label { font-size:13px; color:var(--text-muted); }
@@ -55,12 +105,13 @@
     <a href="/static/index.html" class="nav-tab">ניהול סקרים</a>
     <a href="/static/voice.html" class="nav-tab">שיחות חיות</a>
     <a href="/static/operator.html" class="nav-tab active">קונסול מנהל</a>
+    <a href="/demo-call" class="nav-tab">שיחת דמו</a>
     <a href="#" class="nav-tab">אנליטיקה</a>
-    <a href="#" class="nav-tab">הגדרות</a>
   </nav>
 
   <div class="header-left">
     <div class="top-badge" id="queue-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;">תור: 0</div>
+    <div class="webrtc-status webrtc-off" id="webrtc-badge">🎙️ WebRTC: טוען…</div>
   </div>
 </header>
 
@@ -68,14 +119,13 @@
   <div class="page-header">
     <div class="page-title">
       <h1>קונסול מנהל — תור התערבות</h1>
-      <p>שיחות ממוינות לפי דחיפות — השתלט או החזר לסוכן</p>
+      <p>שיחות ממוינות לפי דחיפות — השתלט ודבר ישירות עם הלקוח</p>
     </div>
   </div>
 
-  <!-- Info banner -->
   <div class="card" style="background:#fef3c7;padding:12px 20px;border-color:#fde68a;color:#92400e;display:flex;align-items:center;gap:12px;margin-bottom:24px;">
     <b>🎧 מנהל אנושי בלולאה</b>
-    <span style="font-size:14px;">שיחות שהסוכן לא הצליח לטפל בהן מועברות לתור זה לפי דחיפות. לחץ "השתלט" כדי להתחבר לשיחה.</span>
+    <span style="font-size:14px;">לחץ "השתלט" — תתחבר ישירות לשיחה ותוכל לדבר עם הלקוח דרך המיקרופון שלך.</span>
   </div>
 
   <div class="operator-bar">
@@ -98,6 +148,217 @@
 <script>
 const BASE = '';
 let refreshTimer = null;
+let twilioDevice = null;
+let activeCall = null;
+let activeSessionId = null;
+let webrtcReady = false;
+
+// ── Demo WebSocket rooms ──────────────────────────────────────────────────────
+const _demoWS        = {};   // sessionId → WebSocket
+const _demoConnected = {};   // sessionId → bool — was ws ever OPEN (suppress repeat close logs)
+const _demoRec       = {};   // sessionId → SpeechRecognition
+const _demoLog       = {};   // sessionId → [{type, text}]  — persists across re-renders
+const _demoLang      = {};   // sessionId → 'he' | 'en'  — detected from transcript/questions
+
+function _detectSessionLang(s) {
+  const probe = (s.current_question_prompt || '') +
+    (s.history || []).map(e => e.text || '').join(' ');
+  return /[֐-׿]/.test(probe) ? 'he' : 'en';
+}
+
+// getDemoWS(sessionId, onReady?)
+//   Returns the WS (creating it if needed). If onReady is provided it is called
+//   once the socket is open — used by sendDemoMsg so the send never races.
+function getDemoWS(sessionId, onReady) {
+  const existing = _demoWS[sessionId];
+  if (existing) {
+    if (existing.readyState === WebSocket.OPEN) {
+      if (onReady) onReady(existing);
+      return existing;
+    }
+    if (existing.readyState === WebSocket.CONNECTING) {
+      if (onReady) existing.addEventListener('open', () => onReady(existing), { once: true });
+      return existing;
+    }
+    // CLOSING or CLOSED — fall through and create a fresh socket
+  }
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/call/${sessionId}?role=operator`);
+
+  ws.onopen = () => {
+    _demoConnected[sessionId] = true;
+    _pushLog(sessionId, 'system', '🔗 מחובר לשיחת הדמו');
+    if (onReady) onReady(ws);
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.sender === 'caller') {
+      _pushLog(sessionId, 'in', `👤 ${msg.text}`);
+    }
+  };
+  ws.onclose = () => {
+    // Only log once — when we were actually connected before this close
+    if (_demoConnected[sessionId]) {
+      _demoConnected[sessionId] = false;
+      _pushLog(sessionId, 'system', '🔌 החיבור נסגר');
+    }
+    // Clear so next send creates a fresh socket, but don't auto-reconnect
+    // (that loop was the source of spam)
+    if (_demoWS[sessionId] === ws) delete _demoWS[sessionId];
+  };
+
+  _demoWS[sessionId] = ws;
+  return ws;
+}
+
+// Store a message AND update the DOM box if it exists
+function _pushLog(sessionId, type, text) {
+  if (!_demoLog[sessionId]) _demoLog[sessionId] = [];
+  _demoLog[sessionId].push({ type, text });
+  _renderMsg(sessionId, type, text);
+}
+
+function _renderMsg(sessionId, type, text) {
+  const box = document.getElementById(`demo-msgs-${sessionId}`);
+  if (!box) return;
+  const div = document.createElement('div');
+  div.className = type === 'out' ? 'op-msg-out' : (type === 'in' ? 'op-msg-in' : '');
+  if (type === 'system') { div.style.color = '#94a3b8'; div.style.fontSize = '11px'; }
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+// After renderQueue() re-draws cards, replay the log into fresh DOM elements
+function _replayLog(sessionId) {
+  const box = document.getElementById(`demo-msgs-${sessionId}`);
+  if (!box || !_demoLog[sessionId]) return;
+  box.innerHTML = '';
+  _demoLog[sessionId].forEach(m => _renderMsg(sessionId, m.type, m.text));
+}
+
+function sendDemoMsg(sessionId) {
+  const input = document.getElementById(`demo-input-${sessionId}`);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+
+  _pushLog(sessionId, 'out', `🎧 אתה: ${text}`);
+  getDemoWS(sessionId, (ws) => ws.send(JSON.stringify({ text })));
+}
+
+function toggleDemoMic(sessionId) {
+  if (_demoRec[sessionId]) {
+    try { _demoRec[sessionId].stop(); } catch(e) {}
+    _demoRec[sessionId] = null;
+    const btn = document.getElementById(`demo-mic-${sessionId}`);
+    if (btn) { btn.textContent = '🎙️'; btn.classList.remove('rec'); }
+    return;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert('הדפדפן לא תומך בזיהוי קול — נסה Chrome'); return; }
+  const rec = new SR();
+  rec.lang = (_demoLang[sessionId] === 'he') ? 'he-IL' : 'en-US';
+  rec.continuous = false;
+  rec.onstart = () => {
+    const btn = document.getElementById(`demo-mic-${sessionId}`);
+    if (btn) { btn.textContent = '⏹️'; btn.classList.add('rec'); }
+  };
+  rec.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    _demoRec[sessionId] = null;
+    const btn = document.getElementById(`demo-mic-${sessionId}`);
+    if (btn) { btn.textContent = '🎙️'; btn.classList.remove('rec'); }
+    // Reuse sendDemoMsg which handles WS state properly
+    const input = document.getElementById(`demo-input-${sessionId}`);
+    if (input) { input.value = text; }
+    sendDemoMsg(sessionId);
+  };
+  rec.onerror = () => {
+    _demoRec[sessionId] = null;
+    const btn = document.getElementById(`demo-mic-${sessionId}`);
+    if (btn) { btn.textContent = '🎙️'; btn.classList.remove('rec'); }
+  };
+  rec.onend = () => {
+    if (_demoRec[sessionId] === rec) _demoRec[sessionId] = null;
+    const btn = document.getElementById(`demo-mic-${sessionId}`);
+    if (btn) { btn.textContent = '🎙️'; btn.classList.remove('rec'); }
+  };
+  rec.start();
+  _demoRec[sessionId] = rec;
+}
+
+function demoChatPanel(sessionId) {
+  return `
+    <div class="chat-panel" id="chat-panel-${sessionId}">
+      <div class="chat-panel-header">
+        <div class="pulse" style="background:white;"></div>
+        🎧 דיבור ישיר עם המתקשר
+        <span style="font-size:11px;opacity:0.8;margin-right:auto;">פתח <a href="/demo-call?resume=${sessionId}" target="_blank" style="color:white;">שיחת דמו (כלקוח)</a> בטאב נפרד</span>
+      </div>
+      <div class="chat-panel-messages" id="demo-msgs-${sessionId}"></div>
+      <div class="chat-panel-input">
+        <button class="btn-op-mic" id="demo-mic-${sessionId}" onclick="toggleDemoMic('${sessionId}')" title="דבר">🎙️</button>
+        <input id="demo-input-${sessionId}" type="text" placeholder="כתוב הודעה למתקשר…" onkeydown="if(event.key==='Enter')sendDemoMsg('${sessionId}')" />
+        <button class="btn-op-send" onclick="sendDemoMsg('${sessionId}')">שלח</button>
+      </div>
+    </div>`;
+}
+
+// ── WebRTC init ─────────────────────────────────────────────────────────────
+
+async function initWebRTC() {
+  try {
+    const res = await fetch(`${BASE}/api/telephony/token?identity=${encodeURIComponent(operatorId())}`);
+    const data = await res.json();
+
+    if (!data.configured || !data.token) {
+      setBadge('webrtc-off', '🎙️ WebRTC: לא מוגדר');
+      console.warn('Twilio WebRTC not configured:', data.message);
+      return;
+    }
+
+    twilioDevice = new Twilio.Device(data.token, {
+      codecPreferences: ['opus', 'pcmu'],
+      fakeLocalDTMF: true,
+      enableRingingState: true,
+      debug: false,
+    });
+
+    twilioDevice.on('ready', () => {
+      webrtcReady = true;
+      setBadge('webrtc-ok', '🎙️ WebRTC: מוכן');
+    });
+
+    twilioDevice.on('error', (err) => {
+      console.error('Twilio Device error:', err);
+      setBadge('webrtc-off', '🎙️ WebRTC: שגיאה');
+    });
+
+    twilioDevice.on('disconnect', () => {
+      activeCall = null;
+      const prevId = activeSessionId;
+      activeSessionId = null;
+      if (prevId) refreshCard(prevId);
+      setBadge('webrtc-ok', '🎙️ WebRTC: מוכן');
+    });
+
+    await twilioDevice.register();
+  } catch (e) {
+    console.error('WebRTC init failed:', e);
+    setBadge('webrtc-off', '🎙️ WebRTC: שגיאה');
+  }
+}
+
+function setBadge(cls, text) {
+  const el = document.getElementById('webrtc-badge');
+  el.className = `webrtc-status ${cls}`;
+  el.textContent = text;
+}
+
+// ── Queue loading ────────────────────────────────────────────────────────────
 
 function operatorId() {
   return document.getElementById('operator-id').value.trim() || 'operator-1';
@@ -112,6 +373,11 @@ async function loadQueue() {
   document.getElementById('last-refresh').textContent = `עדכון אחרון: ${new Date().toLocaleTimeString('he-IL')}`;
 }
 
+async function refreshCard(sessionId) {
+  // After call state changes, reload the whole queue (simplest)
+  await loadQueue();
+}
+
 function renderQueue(sessions) {
   const el = document.getElementById('queue-list');
   if (!sessions.length) {
@@ -119,13 +385,40 @@ function renderQueue(sessions) {
     return;
   }
   el.innerHTML = sessions.map(s => sessionCard(s)).join('');
+  // Scroll transcript boxes to bottom so most recent lines are visible
+  document.querySelectorAll('.transcript-box').forEach(b => { b.scrollTop = b.scrollHeight; });
+  sessions.forEach(s => {
+    _demoLang[s.session_id] = _detectSessionLang(s);
+    if (s.operator_id) {
+      // Pre-populate chat log with AI conversation history (only once per session)
+      if (!_demoLog[s.session_id]) {
+        const entries = (s.history || []).flatMap(e => {
+          if (e.event === 'caller_input' && e.text)
+            return [{ type: 'in',     text: `👤 ${e.text}` }];
+          if (e.event === 'bot_response' && e.text)
+            return [{ type: 'system', text: `🤖 ${e.text}` }];
+          return [];
+        });
+        if (entries.length) {
+          _demoLog[s.session_id] = [
+            { type: 'system', text: '─── שיחה עם הסוכן (לפני ההסלמה) ───' },
+            ...entries,
+            { type: 'system', text: '─── תחילת שיחה ישירה ───' },
+          ];
+        }
+      }
+      _replayLog(s.session_id);
+      // Re-establish WS after page refresh so hangup notifications can reach caller
+      getDemoWS(s.session_id);
+    }
+  });
 }
 
 const REASON_LABELS = {
   profanity:        'קללות',
   angry_caller:     'כועס',
   high_distress:    'מצוקה',
-  agent_requested:  'ביקש אנושי',
+  agent_requested:  'ביקש מנהל / בן אדם',
   repeated_unclear: 'לא מובן ×N',
   max_retries:      'ניסיונות מקס',
   low_rapport:      'אות חלש',
@@ -147,26 +440,64 @@ function scoreBar(score) {
 
 function transcriptHtml(history) {
   if (!history || !history.length) return '<em style="color:var(--text-muted)">אין תמליל</em>';
-  return history.slice(-10).map(e => {
+  return history.map(e => {
     if (e.event === 'caller_input' && e.text)
       return `<div class="msg-caller">👤 ${e.text}</div>`;
     if (e.event === 'bot_response' && e.text)
       return `<div class="msg-agent">🤖 ${e.text}</div>`;
     return '';
-  }).join('');
+  }).filter(Boolean).join('');
+}
+
+function audioPanel(s) {
+  const isActiveCall = activeSessionId === s.session_id;
+
+  if (isActiveCall && activeCall) {
+    const muted = activeCall.isMuted ? activeCall.isMuted() : false;
+    return `
+      <div class="audio-panel">
+        <div class="pulse"></div>
+        <div class="audio-status">מחובר לשיחה</div>
+        <button class="btn-mute ${muted ? 'muted' : ''}" onclick="toggleMute('${s.session_id}')" style="margin-right:auto;">
+          ${muted ? '🔇 מושתק' : '🎙️ פעיל'}
+        </button>
+        <button class="btn-hangup" onclick="disconnectCall('${s.session_id}')" style="padding:5px 12px;font-size:12px;">
+          📵 נתק שיחה
+        </button>
+      </div>`;
+  }
+
+  if (s.operator_id && webrtcReady) {
+    return `
+      <div class="audio-panel" style="background:#fef9c3;border-color:#fde68a;">
+        <span style="color:#92400e;">🔌 ממתין לחיבור קולי</span>
+        <button class="btn-takeover" onclick="connectAudio('${s.session_id}')" style="margin-right:auto;padding:5px 12px;font-size:12px;">
+          🎙️ חבר מיקרופון
+        </button>
+      </div>`;
+  }
+
+  return '';
 }
 
 function sessionCard(s) {
   const takenOver = !!s.operator_id;
+  const isActiveCall = activeSessionId === s.session_id;
   const time = new Date(s.triggered_at).toLocaleTimeString('he-IL');
+
+  let cardClass = 'session-card';
+  if (isActiveCall) cardClass += ' in-call';
+  else if (takenOver) cardClass += ' taken-over';
+
   return `
-  <div class="session-card ${takenOver ? 'taken-over' : ''}" id="card-${s.session_id}">
+  <div class="${cardClass}" id="card-${s.session_id}">
     <div class="card-meta">
       <div>
         <span class="card-phone">${s.participant_phone}</span>
         <span style="font-size:12px;color:var(--text-muted);margin-right:8px;">${s.session_id.substring(0,8)}…</span>
         <span style="margin-right:6px;">${reasonBadge(s.reason)}</span>
         ${takenOver ? `<span style="font-size:12px;color:#f59e0b;font-weight:600;margin-right:6px;">🎧 ${s.operator_id}</span>` : ''}
+        ${isActiveCall ? `<span style="font-size:12px;color:#16a34a;font-weight:600;">📞 בשיחה</span>` : ''}
       </div>
       <span class="card-time">${time}</span>
     </div>
@@ -178,18 +509,24 @@ function sessionCard(s) {
       : ''}
 
     <div style="margin-top:10px;">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">תמליל שיחה (10 שורות אחרונות):</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">תמליל שיחה עם הסוכן:</div>
       <div class="transcript-box">${transcriptHtml(s.history)}</div>
     </div>
 
+    ${audioPanel(s)}
+
+    ${takenOver ? demoChatPanel(s.session_id) : ''}
+
     <div class="actions">
-      <button class="btn-hangup"  onclick="hangup('${s.session_id}')">📵 נתק שיחה</button>
-      ${takenOver
-        ? `<button class="btn-return"   onclick="returnToAgent('${s.session_id}')">🤖 החזר לסוכן</button>`
-        : `<button class="btn-takeover" onclick="takeover('${s.session_id}')">🎧 השתלט</button>`}
+      ${!takenOver
+        ? `<button class="btn-takeover" onclick="takeover('${s.session_id}')">🎧 השתלט</button>`
+        : (!isActiveCall ? `<button class="btn-return" onclick="returnToAgent('${s.session_id}')">🤖 החזר לסוכן</button>` : '')}
+      ${!isActiveCall ? `<button class="btn-hangup" onclick="hangup('${s.session_id}')">📵 נתק שיחה</button>` : ''}
     </div>
   </div>`;
 }
+
+// ── Operator actions ─────────────────────────────────────────────────────────
 
 async function takeover(sessionId) {
   const res = await fetch(`${BASE}/api/operator/sessions/${sessionId}/takeover`, {
@@ -198,10 +535,89 @@ async function takeover(sessionId) {
     body: JSON.stringify({operator_id: operatorId()}),
   });
   if (!res.ok) { alert((await res.json()).detail); return; }
+  const data = await res.json();
+
   await loadQueue();
+
+  // Connect demo WebSocket so operator can chat with demo-call.html caller
+  getDemoWS(sessionId);
+
+  // If the server confirmed the call was redirected to a Twilio Conference, connect browser audio
+  if (data.conference_active && data.conference_room) {
+    await connectToConference(sessionId, data.conference_room);
+  }
+}
+
+async function connectAudio(sessionId) {
+  // Operator already took over but wants to connect audio manually
+  const snap = await fetch(`${BASE}/api/operator/queue/${sessionId}`).then(r => r.json());
+  const room = `conf-${sessionId}`;
+  await connectToConference(sessionId, room);
+}
+
+async function connectToConference(sessionId, conferenceRoom) {
+  if (!twilioDevice || !webrtcReady) {
+    alert('Twilio WebRTC לא מוגדר. הגדר TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID ב-.env');
+    return;
+  }
+  // Disconnect any existing call first
+  if (activeCall) {
+    activeCall.disconnect();
+    activeCall = null;
+  }
+
+  try {
+    setBadge('webrtc-ok', '🎙️ WebRTC: מתחבר…');
+    const call = await twilioDevice.connect({
+      params: { room: conferenceRoom },
+    });
+
+    call.on('accept', () => {
+      activeCall = call;
+      activeSessionId = sessionId;
+      setBadge('webrtc-ok', '🎙️ WebRTC: בשיחה');
+      loadQueue();
+    });
+    call.on('disconnect', () => {
+      activeCall = null;
+      activeSessionId = null;
+      setBadge('webrtc-ok', '🎙️ WebRTC: מוכן');
+      loadQueue();
+    });
+    call.on('error', (err) => {
+      console.error('Call error:', err);
+      setBadge('webrtc-off', '🎙️ WebRTC: שגיאה');
+    });
+  } catch (e) {
+    console.error('Connect failed:', e);
+    alert('שגיאה בהתחברות לשיחה: ' + e.message);
+  }
+}
+
+function toggleMute(sessionId) {
+  if (!activeCall || activeSessionId !== sessionId) return;
+  const muted = activeCall.isMuted ? activeCall.isMuted() : false;
+  activeCall.mute(!muted);
+  loadQueue(); // re-render the audio panel button
+}
+
+function disconnectCall(sessionId) {
+  if (activeCall) {
+    activeCall.disconnect();
+    activeCall = null;
+    activeSessionId = null;
+  }
+  loadQueue();
 }
 
 async function returnToAgent(sessionId) {
+  if (activeCall && activeSessionId === sessionId) {
+    activeCall.disconnect();
+    activeCall = null;
+    activeSessionId = null;
+  }
+  // Notify caller BEFORE closing the WS so the message arrives
+  _notifyCallerAndClose(sessionId, 'return_to_agent', 'הועבר חזרה לסוכן AI — המשך הסקר.');
   await fetch(`${BASE}/api/operator/sessions/${sessionId}/return`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -212,6 +628,13 @@ async function returnToAgent(sessionId) {
 
 async function hangup(sessionId) {
   if (!confirm('לנתק את השיחה?')) return;
+  if (activeCall && activeSessionId === sessionId) {
+    activeCall.disconnect();
+    activeCall = null;
+    activeSessionId = null;
+  }
+  // Notify caller BEFORE closing the WS so the message arrives
+  _notifyCallerAndClose(sessionId, 'hangup', 'השיחה הסתיימה על ידי המנהל.');
   await fetch(`${BASE}/api/operator/sessions/${sessionId}/hangup`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -220,11 +643,29 @@ async function hangup(sessionId) {
   await loadQueue();
 }
 
+// Send a typed control message to the caller, then close the operator WS cleanly.
+function _notifyCallerAndClose(sessionId, type, text) {
+  const existing = _demoWS[sessionId];
+  if (!existing || existing.readyState !== WebSocket.OPEN) return;
+  try {
+    existing.send(JSON.stringify({ type, text }));
+  } catch (e) { /* ignore */ }
+  // Give the message 200 ms to reach the caller before closing
+  setTimeout(() => {
+    try { existing.close(); } catch (e) { /* ignore */ }
+    delete _demoWS[sessionId];
+    _demoConnected[sessionId] = false;
+  }, 200);
+}
+
 function toggleAutoRefresh(cb) {
   if (cb.checked) refreshTimer = setInterval(loadQueue, 5000);
   else { clearInterval(refreshTimer); refreshTimer = null; }
 }
 
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+
+initWebRTC();
 loadQueue();
 refreshTimer = setInterval(loadQueue, 5000);
 </script>

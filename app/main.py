@@ -6,30 +6,40 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from collections import defaultdict
+
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
+    Answer,
+    AnswerLabel,
     BranchRule,
     CallLog,
     CallAttempt,
     CallingPolicy,
     Campaign,
     CampaignExecution,
+    ConversationTurn,
+    DemographicWeight,
+    FreeTextLabel,
+    Interviewee,
     Participant,
     Question,
 )
 from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
+from .voice.escalation import get_escalation_queue
 from .voice.pipeline import VoicePipeline
+from .analytics.router import router as analytics_router, global_router as analytics_global_router
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .operator.router import router as operator_router
 from .telephony.router import router as telephony_router
@@ -60,9 +70,26 @@ _scheduler_task: asyncio.Task | None = None
 _telephony_watchdog: asyncio.Task | None = None
 
 
+def _migrate_db() -> None:
+    """Add columns that were introduced after initial schema creation."""
+    new_cols = [
+        ("call_logs",  "voice_metrics", "JSON"),
+        ("call_logs",  "history",       "JSON"),
+        ("campaigns",  "description",   "TEXT"),
+    ]
+    with engine.connect() as conn:
+        for table, col, col_type in new_cols:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass  # column already exists — ignore
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _scheduler_task, _telephony_watchdog
+    _migrate_db()
     if not getattr(_app.state, "disable_scheduler", False):
         if _scheduler_task is None or _scheduler_task.done():
             _scheduler_task = asyncio.create_task(_scheduler_loop())
@@ -78,6 +105,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0", lifespan=lifespan)
+app.include_router(analytics_router)
+app.include_router(analytics_global_router)
 app.include_router(dashboard_router)
 app.include_router(operator_router)
 app.include_router(telephony_router)
@@ -288,6 +317,71 @@ def voice_simulator():
 @app.get("/gallery")
 def gallery_page():
     return FileResponse("app/static/gallery.html")
+
+
+@app.get("/demo-call")
+def demo_call_page():
+    return FileResponse("app/static/demo-call.html")
+
+
+@app.get("/operator")
+def operator_page():
+    return FileResponse("app/static/operator.html")
+
+
+# ── WebSocket relay for browser demo calls ────────────────────────────────────
+# Maps session_id → set of connected WebSocket clients (caller + operator).
+# Each message is broadcast to all OTHER participants in the same room.
+
+_ws_rooms: dict[str, set[WebSocket]] = defaultdict(set)
+
+
+@app.websocket("/ws/call/{session_id}")
+async def call_ws(websocket: WebSocket, session_id: str, role: str = "caller"):
+    """Real-time relay between the caller page and the operator console.
+
+    role: "caller" or "operator" — carried in each relayed message so the
+    receiving end can style it correctly.
+    """
+    await websocket.accept()
+    room = _ws_rooms[session_id]
+    room.add(websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            data["sender"] = role
+            # Log text messages to ctx.history ONLY during an active operator takeover,
+            # so the agent knows what was discussed. During normal survey turns the caller
+            # also sends via WebSocket for operator visibility, but those messages are
+            # already logged by the /turn endpoint — logging them here too would create
+            # a duplicate caller_input that misleads the prior-profanity check.
+            msg_text = data.get("text", "")
+            msg_type = data.get("type")  # control frames: "hangup", "return_to_agent"
+            if msg_text and not msg_type:
+                session = _voice_sessions.get(session_id)
+                if session:
+                    snap = get_escalation_queue().get(session_id)
+                    in_takeover = snap is not None and snap.operator_id is not None and snap.returned_at is None
+                    if in_takeover:
+                        event = "operator_message" if role == "operator" else "caller_input"
+                        session["ctx"].log(event, text=msg_text, during_takeover=True)
+            dead = set()
+            for peer in list(room):
+                if peer is websocket:
+                    continue
+                try:
+                    await peer.send_json(data)
+                except Exception:
+                    dead.add(peer)
+            room -= dead
+    except (WebSocketDisconnect, Exception):
+        room.discard(websocket)
+        # If the caller disconnected, clean up the session so the operator queue
+        # doesn't show stale entries. More reliable than sendBeacon which can be
+        # cancelled mid-unload by the browser.
+        if role == "caller":
+            _voice_sessions.pop(session_id, None)
+            get_escalation_queue().remove(session_id)
 
 
 @app.get("/api/health")
@@ -953,6 +1047,8 @@ async def start_voice_session(
         branch_rules=branch_rules,
         language=campaign.language,
         locale=payload.locale,
+        campaign_name=campaign.name,
+        campaign_description=campaign.description or "",
     )
 
     result = await _pipeline.start_session(ctx)
@@ -999,6 +1095,39 @@ async def process_voice_turn(
 
     ctx = session["ctx"]
 
+    # On [resume] (operator handing back to agent): reset the FSM to a clean
+    # asking state so accumulated retry counters from before the escalation
+    # don't immediately re-trigger a fallback escalation.
+    # If the session has already escalated 3+ times, end the call instead of
+    # resuming — repeated escalations with no resolution signal the call cannot
+    # be completed productively.
+    if payload.transcript.strip() == "[resume]":
+        from .voice.dialogue.fsm import DialogueState
+        prior_escalations = sum(1 for e in ctx.history if e.get("event") == "escalate")
+        if prior_escalations >= 3:
+            he = getattr(ctx, "_language", "en").startswith("he")
+            end_text = (
+                "נראה שהשיחה לא יכולה להמשיך. תודה על זמנך. שלום."
+                if he else
+                "It seems we're unable to continue this call. Thank you for your time. Goodbye."
+            )
+            ctx.state = DialogueState.DONE
+            ctx.log("session_end", reason="repeated_escalations")
+            return {
+                "session_id": session_id,
+                "response_text": end_text,
+                "dialogue_action": "speak_closing",
+                "current_state": "done",
+                "current_question_key": None,
+                "session_complete": True,
+                "stt_metrics": None,
+                "tts_metrics": None,
+                "mirroring": None,
+                "escalation_snapshot": None,
+            }
+        ctx.state = DialogueState.ASKING
+        ctx.retry_count = 0
+
     # Wrap the provided transcript as an async generator of bytes so the
     # STT adapter's interface is satisfied (mock adapter ignores audio bytes
     # and uses preset responses; real adapters would receive actual audio).
@@ -1034,26 +1163,46 @@ async def process_voice_turn(
         session["completed_at"] = datetime.now(timezone.utc).isoformat()
         session["answers"] = dict(ctx.answers)
 
-    # SAA-101: update CallLog with final status + answers + rapport score
+    # SAA-101: update CallLog with status, answers, rapport, voice metrics, history
     call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
     if call_log:
         call_log.turns_count = len(ctx.history)
         call_log.answers = dict(ctx.answers)
-        # Rapport = avg STT confidence from caller_input events (logged by pipeline)
+
+        # Rapport = avg STT confidence from caller_input events
         confidences = [
             e["confidence"] for e in ctx.history
             if e.get("event") == "caller_input" and isinstance(e.get("confidence"), float) and e["confidence"] > 0
         ]
         call_log.rapport_score = round(sum(confidences) / len(confidences), 2) if confidences else None
+
+        # Voice analytics: persist the calibration state (speaking rate, pitch,
+        # hesitation, energy) so it survives server restarts.
+        cal = ctx.mirroring_calibration
+        call_log.voice_metrics = {
+            "turns_observed":  cal.turns_observed,
+            "is_calibrated":   cal.is_calibrated,
+            "calibration_turns": cal.calibration_turns,
+            "smoothed":  cal.smoothed.to_dict() if cal.smoothed else None,
+            "baseline":  cal.baseline.to_dict() if cal.baseline else None,
+        }
+
+        # Full conversation history for audit / dashboard replay
+        call_log.history = list(ctx.history)
+
         if result.session_complete:
             call_log.ended_at = datetime.now(timezone.utc)
-            action = str(result.dialogue_action)
+            action = result.dialogue_action.value  # use .value so string checks are reliable
             if "escalat" in action:
                 call_log.status = "escalated"
             elif "closing" in action or "end" in action:
                 call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
             else:
                 call_log.status = "completed"
+            # Remove from operator queue if the agent closed the call naturally
+            # (escalated sessions stay until the operator explicitly handles them)
+            if call_log.status != "escalated":
+                get_escalation_queue().remove(session_id)
         db.commit()
 
     # SAA-78/82: include mirroring decision + monitoring flags in turn response
@@ -1070,6 +1219,7 @@ async def process_voice_turn(
         }
         session["last_mirroring"] = mirroring_resp
 
+    esc = result.escalation_snapshot
     return {
         "session_id": session_id,
         "response_text": result.response_text,
@@ -1080,6 +1230,7 @@ async def process_voice_turn(
         "stt_metrics": result.stt_metrics,
         "tts_metrics": result.tts_metrics,
         "mirroring": mirroring_resp,
+        "escalation_snapshot": esc.to_dict() if esc else None,
     }
 
 
@@ -1124,6 +1275,7 @@ def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(g
     session = _voice_sessions.pop(session_id, None)
     if not session or session["campaign_id"] != campaign_id:
         raise HTTPException(status_code=404, detail="Voice session not found")
+    get_escalation_queue().remove(session_id)
     # Mark any still-active CallLog as failed
     call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
     if call_log and call_log.status == "active":
@@ -1131,6 +1283,24 @@ def end_voice_session(campaign_id: int, session_id: str, db: Session = Depends(g
         call_log.ended_at = datetime.now(timezone.utc)
         db.commit()
     return {"ended": True, "session_id": session_id}
+
+
+@app.post("/api/voice/sessions/{session_id}/disconnect")
+def caller_disconnected(session_id: str, db: Session = Depends(get_db)):
+    """Called via sendBeacon when the caller's browser page is closed or refreshed.
+
+    Removes the session from the escalation queue so the operator queue
+    stays clean. The in-memory voice session is also removed so there is
+    no stale state if the caller reconnects with a new session.
+    """
+    _voice_sessions.pop(session_id, None)
+    get_escalation_queue().remove(session_id)
+    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+    if call_log and call_log.status in ("active", "escalated"):
+        call_log.status = "failed"
+        call_log.ended_at = datetime.now(timezone.utc)
+        db.commit()
+    return {"ok": True}
 
 
 @app.get("/dashboard")
