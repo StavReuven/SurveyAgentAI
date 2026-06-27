@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Answer, AnswerLabel, CallLog, Campaign, ConversationTurn, DemographicWeight, FreeTextLabel, Question
+from ..models import Answer, AnswerFactCheck, AnswerLabel, CallLog, Campaign, ConversationTurn, CrossSurveyMatch, DemographicWeight, EntityMention, FreeTextAnalysis, FreeTextLabel, Interviewee, Question
 
 router = APIRouter(prefix="/api/campaigns/{campaign_id}/analytics", tags=["analytics"])
 
@@ -606,3 +606,67 @@ def call_outcomes_by_campaign(db: Session = Depends(get_db)):
             "avg_rapport": round(avg_rapport, 2) if avg_rapport else None,
         })
     return {"campaigns": sorted(result, key=lambda x: -x["total_calls"])}
+
+
+@global_router.get("/intelligence-summary")
+def intelligence_summary(
+    campaign_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Summary of NER entities, sentiment, fact-check, cross-survey matches and topics."""
+    # Entity distribution
+    ner_q = db.query(EntityMention.entity_type, func.count(EntityMention.id).label("cnt"))
+    if campaign_id:
+        ner_q = ner_q.join(Answer, EntityMention.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    entity_distribution = {r.entity_type: r.cnt for r in ner_q.group_by(EntityMention.entity_type).all()}
+
+    # Sentiment distribution from FreeTextAnalysis
+    sent_q = db.query(FreeTextAnalysis.sentiment, func.count(FreeTextAnalysis.id).label("cnt"))
+    if campaign_id:
+        sent_q = sent_q.join(Answer, FreeTextAnalysis.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    sentiment_distribution = {r.sentiment: r.cnt for r in sent_q.group_by(FreeTextAnalysis.sentiment).all()}
+
+    # Fact-check distribution
+    fc_q = db.query(AnswerFactCheck.verdict, func.count(AnswerFactCheck.id).label("cnt"))
+    if campaign_id:
+        fc_q = fc_q.join(Answer, AnswerFactCheck.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    fact_check_distribution = {r.verdict: r.cnt for r in fc_q.group_by(AnswerFactCheck.verdict).all()}
+
+    # Top topics from FreeTextAnalysis.topics JSON
+    topic_counts: dict[str, int] = {}
+    analyses_q = db.query(FreeTextAnalysis.topics)
+    if campaign_id:
+        analyses_q = analyses_q.join(Answer, FreeTextAnalysis.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    for (topics,) in analyses_q.all():
+        if isinstance(topics, list):
+            for t in topics:
+                topic_counts[t] = topic_counts.get(t, 0) + 1
+    top_topics = [{"topic": t, "count": c} for t, c in sorted(topic_counts.items(), key=lambda x: -x[1])[:10]]
+
+    # Cross-survey matches count
+    csm_q = db.query(func.count(CrossSurveyMatch.id))
+    if campaign_id:
+        csm_q = csm_q.filter(
+            (CrossSurveyMatch.source_campaign_id == campaign_id) |
+            (CrossSurveyMatch.target_campaign_id == campaign_id)
+        )
+    cross_survey_matches = csm_q.scalar() or 0
+
+    # Interviewees
+    interviewee_count = db.query(func.count(Interviewee.id)).scalar() or 0
+
+    # Total analyzed answers (those with FreeTextAnalysis)
+    analyzed_q = db.query(func.count(FreeTextAnalysis.id))
+    if campaign_id:
+        analyzed_q = analyzed_q.join(Answer, FreeTextAnalysis.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    stat_analyzed = analyzed_q.scalar() or 0
+
+    return {
+        "entity_distribution": entity_distribution,
+        "sentiment_distribution": sentiment_distribution,
+        "fact_check_distribution": fact_check_distribution,
+        "top_topics": top_topics,
+        "cross_survey_matches": cross_survey_matches,
+        "interviewee_count": interviewee_count,
+        "stat_analyzed": stat_analyzed,
+    }
