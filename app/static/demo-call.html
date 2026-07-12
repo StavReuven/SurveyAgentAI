@@ -478,6 +478,7 @@ function connectWS() {
     if (msg.type === 'return_to_agent') {
       document.getElementById('escalated-banner').style.display = 'none';
       document.getElementById('msg-input').disabled = false;
+      document.getElementById('msg-input').placeholder = 'כתוב כאן או לחץ על המיקרופון…';
       setStatus('ai');
       addMsg('system', '', '🤖 ' + (msg.text || 'הועבר חזרה לסוכן AI — המשך הסקר.'));
       // Proactively re-ask the current question so the caller doesn't have to prompt it
@@ -515,6 +516,8 @@ function onEscalated() {
 async function _resumeAfterHandover() {
   if (!sessionId || !campaignId) return;
   await new Promise(r => setTimeout(r, 400));
+  // Force AI status in case something changed during the await
+  setStatus('ai');
   addMsg('bot', '🤖', '...');
   try {
     const res = await fetch(`/api/campaigns/${campaignId}/voice/sessions/${sessionId}/turn`, {
@@ -528,9 +531,14 @@ async function _resumeAfterHandover() {
       addMsg('bot', '🤖', data.response_text);
       speakText(data.response_text, false, data.dialogue_action);
     }
-    if (data.session_complete) onSessionComplete();
+    if (data.session_complete) {
+      onSessionComplete();
+    } else {
+      setStatus('ai');
+    }
   } catch (e) {
     removeLastMsg();
+    setStatus('ai');
   }
 }
 

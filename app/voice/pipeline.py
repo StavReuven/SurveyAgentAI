@@ -276,10 +276,10 @@ class VoicePipeline:
         audio = await self._synthesise(response_text, ctx, mirroring=mirroring)
         tts_m.record_completion(audio.duration_ms, len(response_text))
 
+        # ESCALATE keeps the session open so the operator can take over
         session_complete = action in (
             DialogueAction.END_CALL,
             DialogueAction.SPEAK_CLOSING,
-            DialogueAction.ESCALATE,
         )
 
         return TurnResult(

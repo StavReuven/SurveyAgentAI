@@ -1127,6 +1127,24 @@ async def process_voice_turn(
             }
         ctx.state = DialogueState.ASKING
         ctx.retry_count = 0
+        # Return the current question directly — skip the full pipeline so
+        # the [resume] text does not trigger a fresh escalation evaluation.
+        current_q = ctx.current_question
+        resume_text = current_q.prompt if current_q else (
+            "נמשיך בסקר." if getattr(ctx, "_language", "en").startswith("he") else "Let's continue the survey."
+        )
+        return {
+            "session_id": session_id,
+            "response_text": resume_text,
+            "dialogue_action": "speak_question",
+            "current_state": ctx.state,
+            "current_question_key": current_q.question_key if current_q else None,
+            "session_complete": False,
+            "stt_metrics": None,
+            "tts_metrics": None,
+            "mirroring": None,
+            "escalation_snapshot": None,
+        }
 
     # Wrap the provided transcript as an async generator of bytes so the
     # STT adapter's interface is satisfied (mock adapter ignores audio bytes
@@ -1190,18 +1208,28 @@ async def process_voice_turn(
         # Full conversation history for audit / dashboard replay
         call_log.history = list(ctx.history)
 
+        action = result.dialogue_action.value
+        # Mark escalated in DB immediately — session stays open for operator takeover
+        if "escalat" in action:
+            call_log.status = "escalated"
+
+        # True if this call ever triggered escalation (checked via in-memory history)
+        call_was_escalated = any(e.get("event") == "escalate" for e in ctx.history)
+
         if result.session_complete:
             call_log.ended_at = datetime.now(timezone.utc)
-            action = result.dialogue_action.value  # use .value so string checks are reliable
-            if "escalat" in action:
+            # Once a call required intervention, keep "escalated" as the final status
+            # so the dashboard cumulative count never drops.
+            if not call_was_escalated and "escalat" not in action:
+                if "closing" in action or "end" in action:
+                    call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
+                else:
+                    call_log.status = "completed"
+            elif call_was_escalated:
                 call_log.status = "escalated"
-            elif "closing" in action or "end" in action:
-                call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
-            else:
-                call_log.status = "completed"
             # Remove from operator queue if the agent closed the call naturally
             # (escalated sessions stay until the operator explicitly handles them)
-            if call_log.status != "escalated":
+            if not call_was_escalated:
                 get_escalation_queue().remove(session_id)
         db.commit()
 

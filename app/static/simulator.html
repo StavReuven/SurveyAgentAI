@@ -1101,6 +1101,14 @@ async function sendTurn(durationMs = 0) {
   let text = inp.value.trim();
   if (!text || !sessionId) return;
 
+  // If in operator takeover mode — send via WebSocket directly
+  if (_isEscalated && _simWS && _simWS.readyState === WebSocket.OPEN) {
+    inp.value = '';
+    addBubble('caller', text);
+    _simWS.send(JSON.stringify({ text, sender: 'caller' }));
+    return;
+  }
+
   // Capture mic-detected hesitation count then reset for next turn.
   // Sent to backend as a separate field — transcript stays clean for NLU/answers.
   const hesitFromMic = _micHesitations;
@@ -1142,6 +1150,15 @@ async function sendTurn(durationMs = 0) {
       const st = await stRes.json();
       updateAnswers(st.answers);
       document.getElementById('s-retries').textContent = st.retry_count ?? '—';
+    }
+
+    if (data.dialogue_action && data.dialogue_action.toLowerCase().includes('escalate')) {
+      document.getElementById('ci-main').textContent = '🔴 Waiting for operator takeover…';
+      inp.disabled = true;
+      document.getElementById('send-btn').disabled = true;
+      document.getElementById('mic-btn').disabled = true;
+      connectSimWS();
+      return;
     }
 
     if (data.session_complete) {
@@ -1239,6 +1256,56 @@ function resetUI() {
   if (recognition && isListening) recognition.stop();
   synth.cancel();
 }
+
+// ── Operator WebSocket relay (escalation mode) ─────────────────────────────
+let _simWS = null;
+let _isEscalated = false;
+
+function connectSimWS() {
+  if (!sessionId || _simWS) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _simWS = new WebSocket(`${proto}://${location.host}/ws/call/${sessionId}?role=caller`);
+
+  _simWS.onopen = () => {
+    console.log('Caller WS connected, waiting for operator...');
+  };
+
+  _simWS.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+
+    // Operator connected / took over
+    if (!_isEscalated && msg.sender === 'operator') {
+      _isEscalated = true;
+      document.getElementById('ci-main').textContent = '🟢 Operator connected';
+      addBubble('bot', '✅ נציג אנושי התחבר לשיחה.', 'operator connected');
+      // Re-enable input so caller can reply to operator
+      const inp = document.getElementById('caller-input');
+      inp.disabled = false;
+      inp.placeholder = 'כתוב תשובה לנציג…';
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('mic-btn').disabled = false;
+    }
+
+    // Operator text message → show as bot bubble
+    if (msg.text && msg.sender === 'operator') {
+      addBubble('bot', msg.text, 'operator');
+      if (voiceEnabled) speak(msg.text);
+    }
+
+    // Control frames
+    if (msg.type === 'hangup') { endCall(true); }
+    if (msg.type === 'return_to_agent') {
+      _isEscalated = false;
+      _simWS = null;
+      document.getElementById('ci-main').textContent = '🤖 Returned to AI agent';
+      addBubble('bot', 'הועברת חזרה לסוכן AI.', 'system');
+    }
+  };
+
+  _simWS.onclose = () => { _simWS = null; };
+  _simWS.onerror = () => { _simWS = null; };
+}
+
 
 function toggleVoice() {
   voiceEnabled = !voiceEnabled;
