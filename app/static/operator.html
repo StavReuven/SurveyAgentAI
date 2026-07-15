@@ -91,8 +91,10 @@
     .card-time  { font-size:12px; color:var(--text-muted); }
     .card-question { margin-top:8px; font-size:13px; color:var(--text-muted); }
   </style>
+  <script src="/static/auth-guard.js"></script>
 </head>
 <body>
+  <script>guardPage(['admin', 'operator']);</script>
 
 <header class="top-header">
   <div class="header-right">
@@ -107,6 +109,7 @@
     <a href="/static/operator.html" class="nav-tab active">קונסול מנהל</a>
     <a href="/demo-call" class="nav-tab">שיחת דמו</a>
     <a href="/static/analytics.html" class="nav-tab">אנליטיקה</a>
+    <a href="/static/settings.html" class="nav-tab">הגדרות</a>
   </nav>
 
   <div class="header-left">

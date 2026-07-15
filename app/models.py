@@ -500,3 +500,86 @@ class DemographicWeight(Base):
             name="uq_demographic_weight"
         ),
     )
+
+
+class ProviderCredential(Base):
+    """SAA-131/132: Encrypted API credential for an external provider (LLM/STT/TTS/telephony)."""
+
+    __tablename__ = "provider_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    key_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    value_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    last_four: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("provider", "key_name", name="uq_provider_credential"),
+    )
+
+
+class DoNotCallEntry(Base):
+    """SAA-140/141: Phone number opted out of / blocked from future calling."""
+
+    __tablename__ = "do_not_call_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    phone_number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    added_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class SettingsAuditEntry(Base):
+    """SAA-143: Persistent audit trail for settings/consent/DNC changes."""
+
+    __tablename__ = "settings_audit_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)  # "provider_credential" | "dnc" | "rbac"
+    action: Mapped[str] = mapped_column(String(32), nullable=False)  # "create" | "update" | "delete"
+    actor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class User(Base):
+    """SAA-136/137: Application user with a role for RBAC."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    role: Mapped[str] = mapped_column(
+        Enum("admin", "operator", "analyst", name="user_role"),
+        nullable=False,
+        default="analyst",
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class Session_(Base):
+    """SAA-137: Server-side login session token."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

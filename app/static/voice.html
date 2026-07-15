@@ -4,8 +4,10 @@
   <meta charset="UTF-8">
   <title>שיחות חיות - VoiceSurvey AI</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/auth-guard.js"></script>
 </head>
 <body>
+  <script>guardPage(['admin', 'operator', 'analyst']);</script>
 
   <header class="top-header">
     <div class="header-right">
@@ -19,7 +21,7 @@
       <a href="/static/voice.html" class="nav-tab active">שיחות חיות</a>
       <a href="/static/operator.html" class="nav-tab">קונסול מנהל</a>
       <a href="/static/analytics.html" class="nav-tab">אנליטיקה</a>
-      <a href="#" class="nav-tab">הגדרות</a>
+      <a href="/static/settings.html" class="nav-tab">הגדרות</a>
     </nav>
 
     <div class="header-left">

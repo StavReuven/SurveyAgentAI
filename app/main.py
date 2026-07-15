@@ -41,7 +41,12 @@ from .voice.escalation import get_escalation_queue
 from .voice.pipeline import VoicePipeline
 from .analytics.router import router as analytics_router, global_router as analytics_global_router
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
+from .auth.router import router as auth_router
 from .operator.router import router as operator_router
+from .settings.router import router as settings_router
+from .settings.dnc import router as settings_dnc_router
+from .settings.audit import router as settings_audit_router
+from .settings.dnc import is_blocked
 from .telephony.router import router as telephony_router
 from .telephony.session_store import get_store as get_telephony_store
 from .telephony.timeouts import start_watchdog
@@ -108,7 +113,11 @@ app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0", lifespan
 app.include_router(analytics_router)
 app.include_router(analytics_global_router)
 app.include_router(dashboard_router)
+app.include_router(auth_router)
 app.include_router(operator_router)
+app.include_router(settings_router)
+app.include_router(settings_dnc_router)
+app.include_router(settings_audit_router)
 app.include_router(telephony_router)
 app.add_middleware(
     CORSMiddleware,
@@ -255,6 +264,9 @@ def _process_scheduler_tick(db: Session, execution: CampaignExecution):
             now_utc,
         )
         if not eligible:
+            continue
+
+        if is_blocked(db, participant.phone_number):
             continue
 
         outcome, note = _simulate_call_outcome(participant)

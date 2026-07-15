@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>הגדרות - VoiceSurvey AI</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <header class="top-header">
+    <div class="header-right">
+      <div class="logo-title">VoiceSurvey AI</div>
+      <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
+    </div>
+
+    <nav class="nav-tabs">
+      <a href="/static/dashboard.html" class="nav-tab">דשבורד</a>
+      <a href="/static/index.html" class="nav-tab">ניהול סקרים</a>
+      <a href="/static/voice.html" class="nav-tab">שיחות חיות</a>
+      <a href="/static/operator.html" class="nav-tab">קונסול מנהל</a>
+      <a href="/static/analytics.html" class="nav-tab">אנליטיקה</a>
+      <a href="/static/settings.html" class="nav-tab active">הגדרות</a>
+    </nav>
+
+    <div class="header-left">
+      <div class="top-badge green">מערכת פעילה</div>
+    </div>
+  </header>
+
+  <div class="page-container">
+    <div class="page-header">
+      <div class="page-title">
+        <h1>הגדרות מערכת</h1>
+        <p>התאם אישית את פרמטרי המערכת</p>
+      </div>
+    </div>
+
+    <div class="settings-tabs">
+      <button class="settings-tab-btn active" data-tab="general">כללי</button>
+      <button class="settings-tab-btn" data-tab="api-keys">מפתחות API וסטטוס חיבור</button>
+      <button class="settings-tab-btn" data-tab="dnc">הסכמה ורשימת אל-תתקשר</button>
+      <button class="settings-tab-btn admin-only" data-tab="users" style="display:none;">משתמשים והרשאות</button>
+      <button class="settings-tab-btn admin-only" data-tab="audit" style="display:none;">יומן ביקורת</button>
+    </div>
+
+    <!-- ── GENERAL (Figma parity: voice mirroring / hybrid intervention / data quality / privacy / notifications) ── -->
+    <div class="settings-panel active" id="panel-general">
+
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <div class="settings-icon">🧠</div>
+            <div>
+              <h2>Psycho-Adaptive Voice Mirroring</h2>
+              <p>התאמת פרמטרי דיבור בזמן אמת</p>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-row-label">הפעל Voice Mirroring</div>
+            <div class="setting-row-desc">התאמה אוטומטית של קצב, טון ואנרגיה לפי המרואיין</div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="g-mirroring-enabled" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row" style="display:block;">
+          <div class="setting-row-label" style="margin-bottom:12px;">הגדרות מתקדמות</div>
+          <div class="grid-2">
+            <div class="range-row">
+              <div class="range-row-top"><span>רגישות להתאמת טון</span><span id="g-tone-val">65</span></div>
+              <input type="range" min="0" max="100" value="65" id="g-tone">
+            </div>
+            <div class="range-row">
+              <div class="range-row-top"><span>רגישות להתאמת קצב</span><span id="g-pace-val">75</span></div>
+              <input type="range" min="0" max="100" value="75" id="g-pace">
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top:14px;">
+            <div>
+              <div class="setting-row-desc" style="margin-bottom:6px;">זמן התאמה (שניות)</div>
+              <input class="form-input" type="number" id="g-adapt-seconds" value="10">
+            </div>
+            <div class="range-row">
+              <div class="range-row-top"><span>רגישות להתאמת אנרגיה</span><span id="g-energy-val">70</span></div>
+              <input type="range" min="0" max="100" value="70" id="g-energy">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <div class="settings-icon">🎚️</div>
+            <div>
+              <h2>Hybrid Intervention System</h2>
+              <p>ניהול העברה למוקדן אנושי</p>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-row-label">התערבות אוטומטית</div>
+            <div class="setting-row-desc">העבר אוטומטית למוקדן כאשר Rapport Score נמוך</div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="g-hybrid-enabled" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row" style="display:block;">
+          <div class="setting-row-label" style="margin-bottom:12px;">הגדרות מתקדמות</div>
+          <div class="range-row">
+            <div class="range-row-top"><span>סף להתערבות Rapport</span><span id="g-rapport-val">50</span></div>
+            <input type="range" min="0" max="100" value="50" id="g-rapport">
+          </div>
+          <div class="grid-2" style="margin-top:14px;">
+            <div>
+              <div class="setting-row-desc" style="margin-bottom:6px;">זמן המתנה מקסימלי (דקות)</div>
+              <input class="form-input" type="number" id="g-max-wait" value="2">
+            </div>
+            <div>
+              <div class="setting-row-desc" style="margin-bottom:6px;">מספר ניסיונות חוזרים</div>
+              <input class="form-input" type="number" id="g-retries" value="3">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <div class="settings-icon">🗄️</div>
+            <div>
+              <h2>Data Quality &amp; Bias Correction</h2>
+              <p>תיקון הטיות ובקרת איכות נתונים</p>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-row-label">תיקון הטיות אוטומטי</div>
+            <div class="setting-row-desc">ניטור ותיקון הטיות במדגם בזמן אמת</div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="g-bias-enabled" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row" style="display:block;">
+          <div class="setting-row-label" style="margin-bottom:12px;">הגדרות מתקדמות</div>
+          <div class="grid-2">
+            <div class="range-row">
+              <div class="range-row-top"><span>משקל דמוגרפי</span><span id="g-demo-val">60</span></div>
+              <input type="range" min="0" max="100" value="60" id="g-demo">
+            </div>
+            <div class="range-row">
+              <div class="range-row-top"><span>סף אנומליה</span><span id="g-anomaly-val">85</span></div>
+              <input type="range" min="0" max="100" value="85" id="g-anomaly">
+            </div>
+          </div>
+          <div class="range-row" style="margin-top:14px;">
+            <div class="range-row-top"><span>משקל התנהגותי</span><span id="g-behavior-val">40</span></div>
+            <input type="range" min="0" max="100" value="40" id="g-behavior">
+          </div>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <div class="settings-icon green">🛡️</div>
+            <div>
+              <h2>פרטיות ותאימות</h2>
+              <p>הגדרות אבטחה ושמירה על פרטיות</p>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-row-label">Opt-in בלבד</div>
+            <div class="setting-row-desc">התקשר רק למשתתפים שנתנו הסכמה מראש</div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="g-opt-in" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-row-label">הקלטת שיחות</div>
+            <div class="setting-row-desc">שמור הקלטות לצורכי ניתוח ושיפור</div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="g-recording" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-row-label">אנונימיזציה אוטומטית</div>
+            <div class="setting-row-desc">הסר מידע מזהה מתוצאות הסקר</div>
+          </div>
+          <label class="toggle-switch"><input type="checkbox" id="g-anon" checked><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <div class="settings-icon orange">🔔</div>
+            <div>
+              <h2>התראות</h2>
+              <p>נהל התראות ועדכונים</p>
+            </div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-label">התערבות אנושית נדרשת</div>
+          <label class="toggle-switch"><input type="checkbox" id="n-intervention" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-label">סקר הושלם</div>
+          <label class="toggle-switch"><input type="checkbox" id="n-completed" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-label">אנומליה זוהתה</div>
+          <label class="toggle-switch"><input type="checkbox" id="n-anomaly" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-label">דוח יומי מוכן</div>
+          <label class="toggle-switch"><input type="checkbox" id="n-daily-report" checked><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:12px;">
+        <button class="btn-primary" id="g-save">שמור שינויים</button>
+        <button class="btn-secondary" id="g-reset">אפס לברירת מחדל</button>
+      </div>
+      <div id="g-save-status" class="setting-row-desc" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- ── API KEYS & CONNECTION STATUS (SAA-131) ── -->
+    <div class="settings-panel" id="panel-api-keys">
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div>
+            <h2>מפתחות API וסטטוס חיבור</h2>
+            <p>נהל אישורי גישה לספקי LLM / STT / TTS / טלפוניה — הערכים מוצפנים ולעולם לא מוצגים בטקסט גלוי</p>
+          </div>
+        </div>
+        <div id="providers-list">טוען...</div>
+      </div>
+    </div>
+
+    <!-- ── CONSENT + DO-NOT-CALL (SAA-140) ── -->
+    <div class="settings-panel" id="panel-dnc">
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div>
+            <h2>רשימת אל-תתקשר (Do-Not-Call)</h2>
+            <p>מספרים ברשימה זו לעולם לא ייחייגו, בין אם ידנית ובין אם על ידי המתזמן האוטומטי</p>
+          </div>
+        </div>
+        <div class="inline-form" id="dnc-add-form">
+          <input class="form-input" id="dnc-phone" placeholder="מספר טלפון, לדוגמה +972501234567">
+          <input class="form-input" id="dnc-reason" placeholder="סיבה (אופציונלי)">
+          <button class="btn-primary" id="dnc-add-btn">הוסף לרשימה</button>
+        </div>
+        <div id="dnc-error" style="color: var(--danger); font-size: 12px; margin-top: 8px; display:none;"></div>
+        <table class="settings-table" style="margin-top:16px;">
+          <thead><tr><th>מספר טלפון</th><th>סיבה</th><th>נוסף על ידי</th><th>תאריך</th><th></th></tr></thead>
+          <tbody id="dnc-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── USERS & ROLES (SAA-136, admin only) ── -->
+    <div class="settings-panel" id="panel-users">
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div>
+            <h2>משתמשים והרשאות</h2>
+            <p>ניהול תפקידים: מנהל (Admin) / אופרטור (Operator) / אנליסט (Analyst)</p>
+          </div>
+        </div>
+        <div class="inline-form" id="user-add-form">
+          <input class="form-input" id="user-email" type="email" placeholder="אימייל">
+          <input class="form-input" id="user-password" type="password" placeholder="סיסמה (8+ תווים)">
+          <select class="form-input" id="user-role">
+            <option value="analyst">Analyst</option>
+            <option value="operator">Operator</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button class="btn-primary" id="user-add-btn">הוסף משתמש</button>
+        </div>
+        <div id="user-error" style="color: var(--danger); font-size: 12px; margin-top: 8px; display:none;"></div>
+        <table class="settings-table" style="margin-top:16px;">
+          <thead><tr><th>אימייל</th><th>תפקיד</th><th>סטטוס</th><th></th></tr></thead>
+          <tbody id="user-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── AUDIT LOG (SAA-143, admin only) ── -->
+    <div class="settings-panel" id="panel-audit">
+      <div class="card settings-section">
+        <div class="settings-section-header">
+          <div>
+            <h2>יומן ביקורת</h2>
+            <p>מעקב אחר שינויים בהגדרות, במפתחות API, ברשימת אל-תתקשר ובהרשאות</p>
+          </div>
+        </div>
+        <table class="settings-table">
+          <thead><tr><th>קטגוריה</th><th>פעולה</th><th>מבצע</th><th>פרטים</th><th>תאריך</th></tr></thead>
+          <tbody id="audit-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/auth-guard.js"></script>
+  <script src="/static/settings.js"></script>
+</body>
+</html>

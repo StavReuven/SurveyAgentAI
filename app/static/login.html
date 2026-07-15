@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>התחברות - VoiceSurvey AI</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body style="display:flex; align-items:center; justify-content:center; min-height:100vh;">
+
+  <div class="card" style="width: 360px;">
+    <div style="text-align:center; margin-bottom: 20px;">
+      <div class="logo-title" style="font-size: 20px;">VoiceSurvey AI</div>
+      <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
+    </div>
+
+    <form id="login-form">
+      <div style="margin-bottom: 14px;">
+        <label class="setting-row-desc" style="display:block; margin-bottom:6px;">אימייל</label>
+        <input class="form-input" type="email" id="email" required autocomplete="username">
+      </div>
+      <div style="margin-bottom: 14px;">
+        <label class="setting-row-desc" style="display:block; margin-bottom:6px;">סיסמה</label>
+        <input class="form-input" type="password" id="password" required autocomplete="current-password">
+      </div>
+      <div id="login-error" style="color: var(--danger); font-size: 12px; margin-bottom: 12px; display:none;"></div>
+      <button class="btn-primary" style="width:100%;" type="submit">התחבר</button>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById('login-form');
+    const errorBox = document.getElementById('login-error');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.style.display = 'none';
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        errorBox.textContent = 'אימייל או סיסמה שגויים';
+        errorBox.style.display = 'block';
+        return;
+      }
+
+      const params = new URLSearchParams(location.search);
+      const next = params.get('next') || '/static/dashboard.html';
+      location.replace(next);
+    });
+  </script>
+
+</body>
+</html>
