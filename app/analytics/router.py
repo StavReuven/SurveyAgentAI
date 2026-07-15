@@ -617,7 +617,7 @@ def intelligence_summary(
     # Entity distribution
     ner_q = db.query(EntityMention.entity_type, func.count(EntityMention.id).label("cnt"))
     if campaign_id:
-        ner_q = ner_q.join(Answer, EntityMention.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+        ner_q = ner_q.filter(EntityMention.campaign_id == campaign_id)
     entity_distribution = {r.entity_type: r.cnt for r in ner_q.group_by(EntityMention.entity_type).all()}
 
     # Sentiment distribution from FreeTextAnalysis

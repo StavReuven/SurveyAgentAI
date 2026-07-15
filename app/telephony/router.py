@@ -4,12 +4,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from twilio.twiml.voice_response import VoiceResponse, Gather
 
 from ..database import get_db
+from ..settings.dnc import is_blocked
 from .conference import (
     conference_name_for,
     generate_access_token,
@@ -35,6 +36,9 @@ async def initiate_call(
     db: Session = Depends(get_db),
 ):
     """Trigger an outbound Twilio call for an existing voice session."""
+    if is_blocked(db, to_number):
+        raise HTTPException(status_code=403, detail="Phone number is on the Do-Not-Call list")
+
     store   = get_store()
     gateway = get_gateway()
 

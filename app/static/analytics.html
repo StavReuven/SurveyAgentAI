@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <title>אנליטיקה - VoiceSurvey AI</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/auth-guard.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 24px; }
@@ -39,6 +40,7 @@
   </style>
 </head>
 <body>
+<script>guardPage(['admin', 'operator', 'analyst']);</script>
 
 <header class="top-header">
   <div class="header-right">
@@ -50,7 +52,7 @@
     <a href="/static/index.html" class="nav-tab">ניהול סקרים</a>
     <a href="/static/voice.html" class="nav-tab">שיחות חיות</a>
     <a href="/static/analytics.html" class="nav-tab active">אנליטיקה</a>
-    <a href="#" class="nav-tab">הגדרות</a>
+    <a href="/static/settings.html" class="nav-tab">הגדרות</a>
   </nav>
   <div class="header-left">
     <div class="top-badge blue" id="badge-active">טוען...</div>

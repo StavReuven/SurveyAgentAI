@@ -1,2 +1,6 @@
 *.db
-"survey_agent_ai.db" 
+"survey_agent_ai.db"
+app/settings/.encryption_key
+.env
+.env.bak
+.env.*.bak

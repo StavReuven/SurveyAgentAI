@@ -18,23 +18,25 @@
     .list li { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; font-size: 13px;}
     .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 12px 24px; border-radius: 8px; z-index: 9999; transition: opacity 0.3s; }
   </style>
+  <script src="/static/auth-guard.js"></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <script>guardPage(['admin', 'operator', 'analyst']);</script>
 
   <header class="top-header">
     <div class="header-right">
       <div class="logo-title">VoiceSurvey AI</div>
       <div class="logo-subtitle">סקרים טלפוניים אוטומטיים מבוססי AI</div>
     </div>
-    
+
     <nav class="nav-tabs">
       <a href="/static/dashboard.html" class="nav-tab">דשבורד</a>
       <a href="/static/index.html" class="nav-tab active">ניהול סקרים</a>
       <a href="/static/voice.html" class="nav-tab">שיחות חיות</a>
       <a href="/static/operator.html" class="nav-tab">קונסול מנהל</a>
       <a href="/static/analytics.html" class="nav-tab">אנליטיקה</a>
-      <a href="#" class="nav-tab">הגדרות</a>
+      <a href="/static/settings.html" class="nav-tab">הגדרות</a>
     </nav>
 
     <div class="header-left">

@@ -111,10 +111,12 @@ def get_kpis(
     avg_rating = round(sum(all_ratings) / len(all_ratings), 2) if all_ratings else None
 
     # Average call duration in seconds (completed calls with ended_at set)
+    if db.bind.dialect.name == "postgresql":
+        duration_expr = func.extract("epoch", CallLog.ended_at - CallLog.started_at)
+    else:
+        duration_expr = (func.julianday(CallLog.ended_at) - func.julianday(CallLog.started_at)) * 86400.0
     avg_duration_seconds = (
-        db.query(
-            func.avg(func.extract("epoch", CallLog.ended_at - CallLog.started_at))
-        )
+        db.query(func.avg(duration_expr))
         .filter(CallLog.ended_at.isnot(None))
         .scalar()
     )
@@ -186,9 +188,14 @@ def get_calls_by_hour(
     """SAA-105 — Calls started per hour bucket (for bar chart)."""
     q = _base_query(db, campaign_id, period)
 
+    if db.bind.dialect.name == "postgresql":
+        hour_expr = func.to_char(CallLog.started_at, "HH24:00")
+    else:
+        hour_expr = func.strftime("%H:00", CallLog.started_at)
+
     rows = (
         q.with_entities(
-            func.to_char(CallLog.started_at, "HH24:00").label("hour"),
+            hour_expr.label("hour"),
             func.count(CallLog.id).label("count"),
         )
         .group_by("hour")
