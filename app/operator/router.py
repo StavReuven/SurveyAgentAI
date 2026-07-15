@@ -6,7 +6,11 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..telephony.conference import conference_name_for, redirect_call_to_conference
+from ..telephony.conference import (
+    conference_name_for,
+    redirect_call_to_conference,
+    remove_caller_from_conference,
+)
 from ..telephony.session_store import get_store as get_telephony_store
 from ..voice.escalation import get_escalation_queue
 from .audit import OperatorAction, get_audit_log
@@ -65,7 +69,7 @@ async def takeover_session(session_id: str, body: TakeoverRequest):
     conference_room = conference_name_for(session_id)
     conference_active = False
     if call_sid:
-        conference_active = redirect_call_to_conference(call_sid, conference_room)
+        conference_active = redirect_call_to_conference(call_sid, conference_room, snap.campaign_id)
 
     return {
         "status": "taken_over",
@@ -89,7 +93,17 @@ async def return_to_agent(session_id: str, body: TakeoverRequest):
     get_audit_log().record(session_id, body.operator_id, OperatorAction.RETURN_TO_AGENT)
     queue.remove(session_id)
 
-    return {"status": "returned_to_agent", "session_id": session_id}
+    # Remove the caller from the operator Conference (if any) so Twilio fetches
+    # the caller <Dial>'s action URL and resumes the AI agent, instead of the
+    # caller being left in dead air, still connected to an empty conference.
+    tel_session = await get_telephony_store().get_by_session_id(session_id)
+    call_sid = tel_session.call_sid if tel_session else None
+    bot_resumed = False
+    if call_sid:
+        conference_room = conference_name_for(session_id)
+        bot_resumed = remove_caller_from_conference(conference_room, call_sid)
+
+    return {"status": "returned_to_agent", "session_id": session_id, "bot_resumed": bot_resumed}
 
 
 @router.post("/sessions/{session_id}/hangup")

@@ -47,6 +47,7 @@ from .settings.router import router as settings_router
 from .settings.dnc import router as settings_dnc_router
 from .settings.audit import router as settings_audit_router
 from .settings.dnc import is_blocked
+from .telephony.router import set_voice_sessions_store
 from .telephony.router import router as telephony_router
 from .telephony.session_store import get_store as get_telephony_store
 from .telephony.timeouts import start_watchdog
@@ -948,6 +949,9 @@ _pipeline = VoicePipeline(mirroring_settings=_mirroring_settings, agent_service=
 
 # Wire session store into dashboard router so live-calls endpoint can read it.
 set_live_sessions_store(_voice_sessions)
+# Wire session store into telephony router so TwiML handlers can speak the
+# pipeline's real greeting/question instead of a generic hardcoded line.
+set_voice_sessions_store(_voice_sessions)
 
 
 class VoiceSessionStartRequest(BaseModel):
@@ -1071,6 +1075,7 @@ async def start_voice_session(
         "started_at": datetime.now(timezone.utc).isoformat(),
         "tts_metrics": [],
         "stt_metrics": [],
+        "last_response_text": result.response_text,
     }
 
     # SAA-101: persist call log for dashboard metrics
@@ -1259,6 +1264,7 @@ async def process_voice_turn(
         }
         session["last_mirroring"] = mirroring_resp
 
+    session["last_response_text"] = result.response_text
     esc = result.escalation_snapshot
     return {
         "session_id": session_id,
