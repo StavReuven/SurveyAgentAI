@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ..auth.deps import require_role
 from ..database import get_db
-from ..models import ProviderCredential, SettingsAuditEntry
+from ..models import ProviderCredential, SettingsAuditEntry, User
 
 router = APIRouter(prefix="/api/settings/providers", tags=["settings"])
 
@@ -42,8 +42,18 @@ class CredentialUpdate(BaseModel):
     values: dict[str, str]
 
 
-def _record_audit(db: Session, action: str, provider: str, actor: str | None = None) -> None:
-    db.add(SettingsAuditEntry(category="provider_credential", action=action, actor=actor, detail=provider))
+def _record_audit(
+    db: Session, action: str, provider: str, actor: str | None = None, organization_id: int | None = None
+) -> None:
+    db.add(
+        SettingsAuditEntry(
+            organization_id=organization_id,
+            category="provider_credential",
+            action=action,
+            actor=actor,
+            detail=provider,
+        )
+    )
 
 
 def _get_stored(db: Session, provider: str, key_name: str) -> ProviderCredential | None:
@@ -87,7 +97,7 @@ def update_provider_credentials(
     provider: str,
     body: CredentialUpdate,
     db: Session = Depends(get_db),
-    _: Any = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ) -> dict[str, Any]:
     from .crypto import encrypt_value
 
@@ -107,7 +117,7 @@ def update_provider_credentials(
             db.add(row)
         row.value_encrypted = encrypt_value(plaintext)
         row.last_four = plaintext[-4:] if len(plaintext) >= 4 else plaintext
-    _record_audit(db, "update", provider)
+    _record_audit(db, "update", provider, actor=admin.email, organization_id=admin.organization_id)
     db.commit()
 
     configured, _ = _resolve_masked(db, provider, PROVIDERS[provider][0])

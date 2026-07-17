@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..models import Organization
 from ..models import Session_ as SessionModel
 from ..models import SettingsAuditEntry, User
 from .deps import SESSION_COOKIE_NAME, get_current_user, require_role
@@ -26,10 +27,35 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SignupRequest(BaseModel):
+    company_name: str = Field(min_length=1)
+    email: str
+    password: str = Field(min_length=8)
+
+
 class UserCreate(BaseModel):
     email: str
     password: str = Field(min_length=8)
     role: str = "analyst"
+
+
+def _start_session(user: User, response: Response, db: Session) -> None:
+    token = generate_token()
+    db.add(
+        SessionModel(
+            token=token,
+            user_id=user.id,
+            expires_at=datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS),
+        )
+    )
+    db.commit()
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        httponly=True,
+        max_age=SESSION_TTL_HOURS * 3600,
+        samesite="lax",
+    )
 
 
 def _bootstrap_admin_if_needed(db: Session) -> None:
@@ -50,23 +76,33 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = generate_token()
-    db.add(
-        SessionModel(
-            token=token,
-            user_id=user.id,
-            expires_at=datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS),
-        )
-    )
-    db.commit()
-    response.set_cookie(
-        SESSION_COOKIE_NAME,
-        token,
-        httponly=True,
-        max_age=SESSION_TTL_HOURS * 3600,
-        samesite="lax",
-    )
+    _start_session(user, response, db)
     return {"email": user.email, "role": user.role}
+
+
+@router.post("/signup")
+def signup(body: SignupRequest, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Self-service registration: creates a new company (Organization) and its
+    first user as a full admin of that company's data, then logs them in."""
+    if db.query(User).filter(User.email == body.email).first() is not None:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    org = Organization(name=body.company_name)
+    db.add(org)
+    db.flush()  # assign org.id before creating the user that references it
+
+    user = User(
+        email=body.email,
+        password_hash=hash_password(body.password),
+        role="admin",
+        organization_id=org.id,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    _start_session(user, response, db)
+    return {"email": user.email, "role": user.role, "organization": org.name}
 
 
 @router.post("/logout")
@@ -83,16 +119,22 @@ def logout(
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"email": user.email, "role": user.role}
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    org = db.get(Organization, user.organization_id) if user.organization_id else None
+    return {"email": user.email, "role": user.role, "organization": org.name if org else None}
 
 
 @router.get("/users")
 def list_users(
-    _: User = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    rows = db.query(User).order_by(User.created_at.asc()).all()
+    rows = (
+        db.query(User)
+        .filter(User.organization_id == admin.organization_id)
+        .order_by(User.created_at.asc())
+        .all()
+    )
     return [
         {"id": r.id, "email": r.email, "role": r.role, "is_active": r.is_active}
         for r in rows
@@ -110,9 +152,22 @@ def create_user(
     if db.query(User).filter(User.email == body.email).first() is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    new_user = User(email=body.email, password_hash=hash_password(body.password), role=body.role)
+    new_user = User(
+        email=body.email,
+        password_hash=hash_password(body.password),
+        role=body.role,
+        organization_id=admin.organization_id,
+    )
     db.add(new_user)
-    db.add(SettingsAuditEntry(category="rbac", action="create", actor=admin.email, detail=f"{body.email}:{body.role}"))
+    db.add(
+        SettingsAuditEntry(
+            organization_id=admin.organization_id,
+            category="rbac",
+            action="create",
+            actor=admin.email,
+            detail=f"{body.email}:{body.role}",
+        )
+    )
     db.commit()
     db.refresh(new_user)
     return {"id": new_user.id, "email": new_user.email, "role": new_user.role}
@@ -124,10 +179,22 @@ def deactivate_user(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    target = db.query(User).filter(User.id == user_id).first()
+    target = (
+        db.query(User)
+        .filter(User.id == user_id, User.organization_id == admin.organization_id)
+        .first()
+    )
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     target.is_active = False
-    db.add(SettingsAuditEntry(category="rbac", action="delete", actor=admin.email, detail=target.email))
+    db.add(
+        SettingsAuditEntry(
+            organization_id=admin.organization_id,
+            category="rbac",
+            action="delete",
+            actor=admin.email,
+            detail=target.email,
+        )
+    )
     db.commit()
     return {"deactivated": True, "email": target.email}

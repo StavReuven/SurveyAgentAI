@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from twilio.twiml.voice_response import VoiceResponse, Gather, Say
 
 from ..database import get_db
+from ..models import CallAttempt, CallLog, Participant
 from ..settings.dnc import is_blocked
 from .conference import (
     conference_name_for,
@@ -19,7 +21,7 @@ from .conference import (
 from .config import TWILIO_WEBHOOK_BASE_URL
 from .gateway import get_gateway
 from .persistence import save_call_log
-from .session_store import get_store
+from .session_store import CallState, get_store
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +322,49 @@ async def webhook_status(
             except ValueError:
                 pass
         save_call_log(db, session)
+
+        # Auto-dial scheduler: finalize the CallAttempt this call was placed
+        # for once it actually ends — it started as "pending" since a real
+        # call's outcome isn't known until it rings/connects/finishes.
+        _TERMINAL_STATES = {
+            CallState.COMPLETED, CallState.FAILED, CallState.NO_ANSWER,
+            CallState.BUSY, CallState.TIMEOUT,
+        }
+        if session.state in _TERMINAL_STATES:
+            attempt = (
+                db.query(CallAttempt)
+                .filter(CallAttempt.session_id == session.session_id, CallAttempt.outcome == "pending")
+                .first()
+            )
+            if attempt:
+                outcome = "success" if session.state == CallState.COMPLETED else "failed"
+                # Twilio only tells us the call connected and ended normally —
+                # it can't distinguish "finished the whole survey" from "caller
+                # asked to be called back later". That distinction lives in the
+                # dialogue's own CallLog.status, set by process_voice_turn.
+                if outcome == "success":
+                    call_log = db.query(CallLog).filter(CallLog.session_id == session.session_id).first()
+                    if call_log and call_log.status == "not_now":
+                        outcome = "not_now"
+
+                attempt.outcome = outcome
+                attempt.finished_at = session.ended_at or datetime.now(timezone.utc)
+                attempt.note = f"twilio_status={session.state.value}"
+                participant = db.get(Participant, attempt.participant_id)
+                if participant:
+                    if outcome == "success":
+                        participant.status = "contacted"
+                    elif outcome == "not_now":
+                        # Keep eligible for a quick retry (see _next_attempt_eligible)
+                        # instead of treating this like a fully answered survey.
+                        participant.status = "pending"
+                    else:
+                        participant.status = "failed"
+                    meta = participant.meta or {}
+                    meta["last_call_outcome"] = outcome
+                    meta["last_call_note"] = attempt.note
+                    participant.meta = meta
+                db.commit()
 
     return {"received": True}
 

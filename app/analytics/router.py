@@ -4,31 +4,48 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..auth.deps import get_current_user
 from ..database import get_db
-from ..models import Answer, AnswerFactCheck, AnswerLabel, CallLog, Campaign, ConversationTurn, CrossSurveyMatch, DemographicWeight, EntityMention, FreeTextAnalysis, FreeTextLabel, Interviewee, Question
+from ..models import Answer, AnswerFactCheck, AnswerLabel, CallLog, Campaign, ConversationTurn, CrossSurveyMatch, DemographicWeight, EntityMention, FreeTextAnalysis, FreeTextLabel, Interviewee, Question, User
 
 router = APIRouter(prefix="/api/campaigns/{campaign_id}/analytics", tags=["analytics"])
 
 global_router = APIRouter(prefix="/api/analytics", tags=["analytics-global"])
 
 
-def _get_campaign_or_404(campaign_id: int, db: Session) -> Campaign:
-    from fastapi import HTTPException
-    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+def _get_campaign_or_404(campaign_id: int, db: Session, organization_id: int | None = None) -> Campaign:
+    q = db.query(Campaign).filter(Campaign.id == campaign_id)
+    if organization_id is not None:
+        q = q.filter(Campaign.organization_id == organization_id)
+    campaign = q.first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return campaign
 
 
+def _scoped_campaign_ids(db: Session, organization_id: int | None, campaign_id: int | None) -> set[int]:
+    """Resolve which campaign IDs a global analytics query is allowed to see.
+
+    If a specific campaign_id is requested, verify it belongs to the caller's
+    organization (404 otherwise). If none is requested ("all campaigns"),
+    scope to every campaign owned by the caller's organization — never all
+    campaigns system-wide.
+    """
+    if campaign_id is not None:
+        _get_campaign_or_404(campaign_id, db, organization_id)
+        return {campaign_id}
+    return {c.id for c in db.query(Campaign.id).filter(Campaign.organization_id == organization_id).all()}
+
+
 # ─── Campaign-scoped endpoints ────────────────────────────────────────────────
 
 @router.get("/summary")
-def analytics_summary(campaign_id: int, db: Session = Depends(get_db)):
-    _get_campaign_or_404(campaign_id, db)
+def analytics_summary(campaign_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_campaign_or_404(campaign_id, db, user.organization_id)
 
     total = db.query(func.count(CallLog.id)).filter(CallLog.campaign_id == campaign_id).scalar() or 0
     completed = (
@@ -76,15 +93,19 @@ def analytics_summary(campaign_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/questions/{question_key}")
-def question_analytics(campaign_id: int, question_key: str, db: Session = Depends(get_db)):
-    _get_campaign_or_404(campaign_id, db)
+def question_analytics(
+    campaign_id: int,
+    question_key: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_campaign_or_404(campaign_id, db, user.organization_id)
 
     answers = (
         db.query(Answer.normalized_value)
         .filter(Answer.campaign_id == campaign_id, Answer.question_key == question_key)
         .all()
     )
-    from fastapi import HTTPException
     if not answers:
         raise HTTPException(status_code=404, detail="No answers found for this question")
 
@@ -103,8 +124,8 @@ def question_analytics(campaign_id: int, question_key: str, db: Session = Depend
 
 
 @router.get("/responses")
-def list_responses(campaign_id: int, db: Session = Depends(get_db)):
-    _get_campaign_or_404(campaign_id, db)
+def list_responses(campaign_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_campaign_or_404(campaign_id, db, user.organization_id)
 
     rows = (
         db.query(Answer)
@@ -132,20 +153,19 @@ def list_responses(campaign_id: int, db: Session = Depends(get_db)):
 
 # ─── Global analytics endpoints ───────────────────────────────────────────────
 
-def _call_q(db: Session, campaign_id: int | None):
-    q = db.query(CallLog)
-    if campaign_id:
-        q = q.filter(CallLog.campaign_id == campaign_id)
-    return q
+def _call_q(db: Session, scoped_ids: set[int]):
+    return db.query(CallLog).filter(CallLog.campaign_id.in_(scoped_ids))
 
 
 @global_router.get("/overview")
 def analytics_overview(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """KPI cards: completion rate, anomaly count, data quality, sample validity."""
-    q = _call_q(db, campaign_id)
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
+    q = _call_q(db, scoped_ids)
     total = q.count()
     completed = q.filter(CallLog.status == "completed").count()
     completion_rate = round(completed / total * 100, 1) if total else 0.0
@@ -154,15 +174,14 @@ def analytics_overview(
     conf_q = db.query(func.avg(ConversationTurn.stt_confidence)).filter(
         ConversationTurn.speaker == "caller",
         ConversationTurn.stt_confidence.isnot(None),
+        ConversationTurn.campaign_id.in_(scoped_ids),
     )
-    if campaign_id:
-        conf_q = conf_q.filter(ConversationTurn.campaign_id == campaign_id)
     avg_conf = conf_q.scalar()
     data_quality = round((avg_conf or 0) * 100, 1)
 
     # Anomalies: calls with very short duration (<30s) or rapport below 0.5
     anomaly_count = 0
-    logs = _call_q(db, campaign_id).filter(
+    logs = _call_q(db, scoped_ids).filter(
         CallLog.status == "completed",
         CallLog.ended_at.isnot(None),
     ).all()
@@ -174,10 +193,11 @@ def analytics_overview(
             anomaly_count += 1
 
     # Sample validity: % of completed calls with at least one answer
-    sessions_with_answers = db.query(func.count(func.distinct(Answer.session_id)))
-    if campaign_id:
-        sessions_with_answers = sessions_with_answers.filter(Answer.campaign_id == campaign_id)
-    sessions_with_answers = sessions_with_answers.scalar() or 0
+    sessions_with_answers = (
+        db.query(func.count(func.distinct(Answer.session_id)))
+        .filter(Answer.campaign_id.in_(scoped_ids))
+        .scalar() or 0
+    )
     sample_validity = round(sessions_with_answers / total * 100, 1) if total else 0.0
 
     return {
@@ -194,9 +214,11 @@ def analytics_overview(
 def completion_trend(
     campaign_id: int | None = Query(default=None),
     days: int = Query(default=7, ge=1, le=90),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Daily completion % over the last N days."""
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
     now = datetime.now(timezone.utc)
     result = []
     for i in range(days - 1, -1, -1):
@@ -206,9 +228,8 @@ def completion_trend(
         q = db.query(CallLog).filter(
             CallLog.started_at >= day_start,
             CallLog.started_at < day_end,
+            CallLog.campaign_id.in_(scoped_ids),
         )
-        if campaign_id:
-            q = q.filter(CallLog.campaign_id == campaign_id)
 
         total = q.count()
         completed = q.filter(CallLog.status == "completed").count()
@@ -227,15 +248,16 @@ def completion_trend(
 @global_router.get("/anomaly-scatter")
 def anomaly_scatter(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Scatter: call duration (seconds) vs avg caller STT confidence per session."""
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
     q = db.query(CallLog).filter(
         CallLog.status == "completed",
         CallLog.ended_at.isnot(None),
+        CallLog.campaign_id.in_(scoped_ids),
     )
-    if campaign_id:
-        q = q.filter(CallLog.campaign_id == campaign_id)
 
     logs = q.limit(200).all()
     normal, anomalies = [], []
@@ -270,6 +292,7 @@ def anomaly_scatter(
 @global_router.get("/mirroring-effect")
 def mirroring_effect(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Compare completion rate and avg rapport for sessions with/without effective mirroring.
@@ -277,7 +300,8 @@ def mirroring_effect(
     'With mirroring' = rapport_score >= 0.70 (voice features were calibrated).
     'Without mirroring' = rapport_score < 0.70 or null.
     """
-    q = _call_q(db, campaign_id).filter(CallLog.status.in_(["completed", "failed", "not_now"]))
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
+    q = _call_q(db, scoped_ids).filter(CallLog.status.in_(["completed", "failed", "not_now"]))
     logs = q.all()
 
     with_mir = [l for l in logs if l.rapport_score is not None and l.rapport_score >= 0.70]
@@ -303,9 +327,11 @@ def mirroring_effect(
 @global_router.get("/answer-quality")
 def answer_quality_by_question(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Avg caller STT confidence per question key (ordered by question order_index)."""
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
     turn_q = db.query(
         ConversationTurn.question_key,
         func.avg(ConversationTurn.stt_confidence).label("avg_conf"),
@@ -314,9 +340,8 @@ def answer_quality_by_question(
         ConversationTurn.speaker == "caller",
         ConversationTurn.question_key.isnot(None),
         ConversationTurn.stt_confidence.isnot(None),
+        ConversationTurn.campaign_id.in_(scoped_ids),
     )
-    if campaign_id:
-        turn_q = turn_q.filter(ConversationTurn.campaign_id == campaign_id)
 
     rows = turn_q.group_by(ConversationTurn.question_key).all()
 
@@ -343,12 +368,12 @@ def answer_quality_by_question(
 @global_router.get("/demographic-bias")
 def demographic_bias(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Demographic weight rows: actual vs target percentages for bias detection."""
-    q = db.query(DemographicWeight)
-    if campaign_id:
-        q = q.filter(DemographicWeight.campaign_id == campaign_id)
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
+    q = db.query(DemographicWeight).filter(DemographicWeight.campaign_id.in_(scoped_ids))
 
     rows = q.order_by(DemographicWeight.demographic_key, DemographicWeight.demographic_value).all()
     return {
@@ -369,13 +394,14 @@ def demographic_bias(
 @global_router.get("/insights")
 def auto_insights(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Auto-generate insight strings from live data."""
-    overview = analytics_overview(campaign_id=campaign_id, db=db)
-    mirroring = mirroring_effect(campaign_id=campaign_id, db=db)
-    trend_data = completion_trend(campaign_id=campaign_id, days=14, db=db)
-    quality = answer_quality_by_question(campaign_id=campaign_id, db=db)
+    overview = analytics_overview(campaign_id=campaign_id, user=user, db=db)
+    mirroring = mirroring_effect(campaign_id=campaign_id, user=user, db=db)
+    trend_data = completion_trend(campaign_id=campaign_id, days=14, user=user, db=db)
+    quality = answer_quality_by_question(campaign_id=campaign_id, user=user, db=db)
 
     insights = []
 
@@ -441,17 +467,18 @@ def auto_insights(
 @global_router.get("/free-text-labels")
 def free_text_label_distribution(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Distribution of free-text answer labels — foundation for future NLP/sentiment analysis."""
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
     q = db.query(
         FreeTextLabel.label,
         FreeTextLabel.question_key,
         func.count(AnswerLabel.id).label("cnt"),
-    ).join(AnswerLabel, AnswerLabel.label_id == FreeTextLabel.id)
-
-    if campaign_id:
-        q = q.filter(FreeTextLabel.campaign_id == campaign_id)
+    ).join(AnswerLabel, AnswerLabel.label_id == FreeTextLabel.id).filter(
+        FreeTextLabel.campaign_id.in_(scoped_ids)
+    )
 
     rows = q.group_by(FreeTextLabel.label, FreeTextLabel.question_key).all()
 
@@ -479,6 +506,7 @@ def free_text_label_distribution(
 @global_router.get("/answer-distribution")
 def answer_distribution(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Answer distribution per question, smart-bucketed by question type.
@@ -506,11 +534,10 @@ def answer_distribution(
                 buckets["ניטרלי"] += 1
         return buckets
 
-    q_filter = [Answer.campaign_id == campaign_id] if campaign_id else []
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
+    q_filter = [Answer.campaign_id.in_(scoped_ids)]
 
-    questions_q = db.query(Question)
-    if campaign_id:
-        questions_q = questions_q.filter(Question.campaign_id == campaign_id)
+    questions_q = db.query(Question).filter(Question.campaign_id.in_(scoped_ids))
     questions = questions_q.order_by(Question.campaign_id, Question.order_index).all()
 
     result = []
@@ -583,9 +610,19 @@ def answer_distribution(
 
 
 @global_router.get("/call-outcomes-by-campaign")
-def call_outcomes_by_campaign(db: Session = Depends(get_db)):
+def call_outcomes_by_campaign(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Per-campaign breakdown of call outcomes — for cross-campaign comparison."""
-    campaigns = db.query(Campaign).filter(Campaign.status.in_(["active", "paused", "archived"])).all()
+    campaigns = (
+        db.query(Campaign)
+        .filter(
+            Campaign.organization_id == user.organization_id,
+            Campaign.status.in_(["active", "paused", "archived"]),
+        )
+        .all()
+    )
     result = []
     for c in campaigns:
         total = db.query(func.count(CallLog.id)).filter(CallLog.campaign_id == c.id).scalar() or 0
@@ -611,32 +648,33 @@ def call_outcomes_by_campaign(db: Session = Depends(get_db)):
 @global_router.get("/intelligence-summary")
 def intelligence_summary(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Summary of NER entities, sentiment, fact-check, cross-survey matches and topics."""
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
+
     # Entity distribution
-    ner_q = db.query(EntityMention.entity_type, func.count(EntityMention.id).label("cnt"))
-    if campaign_id:
-        ner_q = ner_q.filter(EntityMention.campaign_id == campaign_id)
+    ner_q = db.query(EntityMention.entity_type, func.count(EntityMention.id).label("cnt")).filter(
+        EntityMention.campaign_id.in_(scoped_ids)
+    )
     entity_distribution = {r.entity_type: r.cnt for r in ner_q.group_by(EntityMention.entity_type).all()}
 
     # Sentiment distribution from FreeTextAnalysis
-    sent_q = db.query(FreeTextAnalysis.sentiment, func.count(FreeTextAnalysis.id).label("cnt"))
-    if campaign_id:
-        sent_q = sent_q.join(Answer, FreeTextAnalysis.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    sent_q = db.query(FreeTextAnalysis.sentiment, func.count(FreeTextAnalysis.id).label("cnt")).filter(
+        FreeTextAnalysis.campaign_id.in_(scoped_ids)
+    )
     sentiment_distribution = {r.sentiment: r.cnt for r in sent_q.group_by(FreeTextAnalysis.sentiment).all()}
 
     # Fact-check distribution
-    fc_q = db.query(AnswerFactCheck.verdict, func.count(AnswerFactCheck.id).label("cnt"))
-    if campaign_id:
-        fc_q = fc_q.join(Answer, AnswerFactCheck.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    fc_q = db.query(AnswerFactCheck.verdict, func.count(AnswerFactCheck.id).label("cnt")).filter(
+        AnswerFactCheck.campaign_id.in_(scoped_ids)
+    )
     fact_check_distribution = {r.verdict: r.cnt for r in fc_q.group_by(AnswerFactCheck.verdict).all()}
 
     # Top topics from FreeTextAnalysis.topics JSON
     topic_counts: dict[str, int] = {}
-    analyses_q = db.query(FreeTextAnalysis.topics)
-    if campaign_id:
-        analyses_q = analyses_q.join(Answer, FreeTextAnalysis.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    analyses_q = db.query(FreeTextAnalysis.topics).filter(FreeTextAnalysis.campaign_id.in_(scoped_ids))
     for (topics,) in analyses_q.all():
         if isinstance(topics, list):
             for t in topics:
@@ -644,21 +682,22 @@ def intelligence_summary(
     top_topics = [{"topic": t, "count": c} for t, c in sorted(topic_counts.items(), key=lambda x: -x[1])[:10]]
 
     # Cross-survey matches count
-    csm_q = db.query(func.count(CrossSurveyMatch.id))
-    if campaign_id:
-        csm_q = csm_q.filter(
-            (CrossSurveyMatch.source_campaign_id == campaign_id) |
-            (CrossSurveyMatch.target_campaign_id == campaign_id)
-        )
+    csm_q = db.query(func.count(CrossSurveyMatch.id)).filter(
+        CrossSurveyMatch.source_campaign_id.in_(scoped_ids) | CrossSurveyMatch.target_campaign_id.in_(scoped_ids)
+    )
     cross_survey_matches = csm_q.scalar() or 0
 
-    # Interviewees
-    interviewee_count = db.query(func.count(Interviewee.id)).scalar() or 0
+    # Interviewees are cross-campaign person profiles with no organization
+    # link of their own — count only those who answered within this org's
+    # campaigns, not the system-wide total.
+    interviewee_count = (
+        db.query(func.count(func.distinct(Answer.interviewee_id)))
+        .filter(Answer.campaign_id.in_(scoped_ids), Answer.interviewee_id.isnot(None))
+        .scalar() or 0
+    )
 
     # Total analyzed answers (those with FreeTextAnalysis)
-    analyzed_q = db.query(func.count(FreeTextAnalysis.id))
-    if campaign_id:
-        analyzed_q = analyzed_q.join(Answer, FreeTextAnalysis.answer_id == Answer.id).filter(Answer.campaign_id == campaign_id)
+    analyzed_q = db.query(func.count(FreeTextAnalysis.id)).filter(FreeTextAnalysis.campaign_id.in_(scoped_ids))
     stat_analyzed = analyzed_q.scalar() or 0
 
     return {

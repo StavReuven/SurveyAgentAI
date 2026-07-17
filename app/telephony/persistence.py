@@ -26,6 +26,16 @@ def save_call_log(db: Session, session: TelephonySession) -> CallLog:
     existing = db.query(CallLog).filter(CallLog.session_id == session.session_id).first()
 
     if existing:
+        # The dialogue pipeline (process_voice_turn) already recorded a more
+        # specific final status ("not_now", "escalated", "completed") based on
+        # *why* the call ended. Twilio's status callback only knows the raw
+        # call lifecycle (ringing/completed/busy/...) and arrives after the
+        # pipeline's own update — don't let it clobber that finer-grained
+        # status back to a generic "completed"/"failed".
+        if existing.status != "active":
+            existing.ended_at = existing.ended_at or session.ended_at
+            db.commit()
+            return existing
         existing.status   = status
         existing.ended_at = session.ended_at
         db.commit()

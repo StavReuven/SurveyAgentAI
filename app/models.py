@@ -21,6 +21,9 @@ class Campaign(Base):
     __tablename__ = "campaigns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
@@ -194,18 +197,20 @@ class CallAttempt(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
     participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     outcome: Mapped[str] = mapped_column(
-        Enum("success", "failed", name="call_outcome"),
+        Enum("success", "failed", "pending", "not_now", name="call_outcome"),
         nullable=False,
+        default="pending",
     )
     started_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
     )
-    finished_at: Mapped[datetime] = mapped_column(
+    finished_at: Mapped[datetime | None] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
+        nullable=True,
     )
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -543,10 +548,25 @@ class SettingsAuditEntry(Base):
     __tablename__ = "settings_audit_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True
+    )
     category: Mapped[str] = mapped_column(String(32), nullable=False)  # "provider_credential" | "dnc" | "rbac"
     action: Mapped[str] = mapped_column(String(32), nullable=False)  # "create" | "update" | "delete"
     actor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class Organization(Base):
+    """A company/tenant that owns a set of campaigns."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -558,6 +578,9 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True
+    )
     email: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
     role: Mapped[str] = mapped_column(

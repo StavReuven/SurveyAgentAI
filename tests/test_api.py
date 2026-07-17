@@ -1,4 +1,8 @@
+from auth_helpers import login_admin
+
+
 def create_campaign(client):
+    login_admin(client)
     payload = {
         "name": "Spring Research",
         "language": "en",

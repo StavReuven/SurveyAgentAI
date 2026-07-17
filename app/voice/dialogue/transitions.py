@@ -174,8 +174,12 @@ class DialogueManager:
     ) -> tuple[FSMContext, DialogueAction, str]:
         q = ctx.current_question
         if q and ctx.pending_answer:
-            ctx.answers[q.question_key] = ctx.pending_answer
-            ctx.log("answer_accepted", key=q.question_key, value=ctx.pending_answer)
+            # MCQ answers are captured as an option letter (A/B/C/D); store the
+            # literal option text instead so answers/reports are readable
+            # without cross-referencing the question's option order.
+            stored_value = self._resolve_mcq_answer_text(q, ctx.pending_answer) or ctx.pending_answer
+            ctx.answers[q.question_key] = stored_value
+            ctx.log("answer_accepted", key=q.question_key, value=stored_value)
 
         # Apply branch rules (if any) — rule engine looks at current answer
         next_idx = self._evaluate_branch_rules(ctx)
@@ -203,9 +207,19 @@ class DialogueManager:
             return None
 
         answer = ctx.answers.get(q.question_key, "")
+        # MCQ answers are stored as the literal option text (resolved from the
+        # captured option letter — see _accept_pending_answer), but a branch
+        # rule might be authored against either the option text or a raw
+        # letter (A/B/C/D). Check both forms so either authoring style matches.
+        alt_answer = (
+            self._resolve_mcq_answer_text(q, answer) or self._resolve_mcq_answer_letter(q, answer)
+        )
 
-        for rule in sorted(ctx._branch_rules_for_current(q.question_id), key=lambda r: r.priority):
-            if self._rule_matches(rule, answer):
+        matching_rules = ctx._branch_rules_for_current(q.question_id)
+        for rule in sorted(matching_rules, key=lambda r: r.priority):
+            if self._rule_matches(rule, answer) or (
+                alt_answer is not None and self._rule_matches(rule, alt_answer)
+            ):
                 if rule.action == "end":
                     return -1
                 if rule.action == "escalate":
@@ -216,6 +230,32 @@ class DialogueManager:
                         if qc.question_id == rule.target_question_id:
                             return idx
         return None  # linear advance
+
+    def _resolve_mcq_answer_text(self, q, answer: str) -> str | None:
+        """For MCQ questions, map a stored option letter (A/B/C/D) back to its
+        literal option text (e.g. 'B' -> 'ronaldo'), or None if not applicable."""
+        if q.question_type != "mcq" or not answer or len(answer) != 1:
+            return None
+        letter = answer.upper()
+        if letter not in "ABCD":
+            return None
+        options = (q.config or {}).get("options") or (q.config or {}).get("choices") or []
+        idx = ord(letter) - ord("A")
+        if 0 <= idx < len(options):
+            return str(options[idx])
+        return None
+
+    def _resolve_mcq_answer_letter(self, q, answer: str) -> str | None:
+        """Reverse of _resolve_mcq_answer_text: map a literal option text
+        (e.g. 'ronaldo') back to its option letter ('B'), for branch rules
+        authored against a raw letter instead of the option text."""
+        if q.question_type != "mcq" or not answer:
+            return None
+        options = (q.config or {}).get("options") or (q.config or {}).get("choices") or []
+        for i, opt in enumerate(options[:4]):
+            if str(opt).lower() == answer.lower():
+                return "ABCD"[i]
+        return None
 
     def _rule_matches(self, rule: object, answer: str) -> bool:
         v = str(rule.value)
