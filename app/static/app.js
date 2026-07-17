@@ -288,6 +288,13 @@ async function openCampaign(id, cardElement) {
   const campaign = await api(`/api/campaigns/${id}`);
   builderTitle.textContent = `Campaign Builder: ${campaign.name}`;
 
+  const settingsForm = document.getElementById("campaign-settings-form");
+  settingsForm.querySelector('[name="name"]').value = campaign.name || "";
+  settingsForm.querySelector('[name="language"]').value = campaign.language || "";
+  settingsForm.querySelector('[name="timezone"]').value = campaign.timezone || "";
+  settingsForm.querySelector('[name="consent_text"]').value = campaign.consent_text || "";
+  settingsForm.querySelector('[name="description"]').value = campaign.description || "";
+
   // Insert builder directly after the clicked card inside the grid
   const targetCard = cardElement || campaignCards.querySelector(`[data-campaign-id="${id}"]`);
   if (targetCard) {
@@ -337,6 +344,31 @@ document.getElementById("campaign-form").addEventListener("submit", async (e) =>
     });
     e.target.reset();
     showToast("Campaign created");
+    await loadCampaignCards();
+  } catch (err) {
+    showToast(err.message);
+  }
+});
+
+document.getElementById("campaign-settings-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const campaignId = getSelectedCampaignId();
+  const form = new FormData(e.target);
+  // Only send fields the user actually filled in — this is an edit form for
+  // an existing campaign, not a "create", so leaving something blank means
+  // "don't change this", not "clear it".
+  const payload = Object.fromEntries(
+    [...form.entries()].filter(([, value]) => value.trim() !== "")
+  );
+
+  try {
+    const updated = await api(`/api/campaigns/${campaignId}`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    });
+    builderTitle.textContent = `Campaign Builder: ${updated.name}`;
+    showToast("Campaign settings saved");
     await loadCampaignCards();
   } catch (err) {
     showToast(err.message);

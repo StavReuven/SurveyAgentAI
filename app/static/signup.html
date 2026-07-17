@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>הרשמה - VoiceSurvey AI</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body style="display:flex; align-items:center; justify-content:center; min-height:100vh;">
+
+  <div class="card" style="width: 380px;">
+    <div style="text-align:center; margin-bottom: 20px;">
+      <div class="logo-title" style="font-size: 20px;">VoiceSurvey AI</div>
+      <div class="logo-subtitle">רישום חברה חדשה</div>
+    </div>
+
+    <form id="signup-form">
+      <div style="margin-bottom: 14px;">
+        <label class="setting-row-desc" style="display:block; margin-bottom:6px;">שם החברה</label>
+        <input class="form-input" type="text" id="company-name" required autocomplete="organization">
+      </div>
+      <div style="margin-bottom: 14px;">
+        <label class="setting-row-desc" style="display:block; margin-bottom:6px;">אימייל מנהל</label>
+        <input class="form-input" type="email" id="email" required autocomplete="username">
+      </div>
+      <div style="margin-bottom: 14px;">
+        <label class="setting-row-desc" style="display:block; margin-bottom:6px;">סיסמה (8+ תווים)</label>
+        <input class="form-input" type="password" id="password" required minlength="8" autocomplete="new-password">
+      </div>
+      <div id="signup-error" style="color: var(--danger); font-size: 12px; margin-bottom: 12px; display:none;"></div>
+      <button class="btn-primary" style="width:100%;" type="submit">הרשם והתחל</button>
+    </form>
+
+    <div style="text-align:center; margin-top:16px; font-size:13px; color:var(--text-muted);">
+      כבר יש לך חשבון? <a href="/static/login.html" style="color:var(--primary);">התחבר כאן</a>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('signup-form');
+    const errorBox = document.getElementById('signup-error');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.style.display = 'none';
+      const company_name = document.getElementById('company-name').value.trim();
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_name, email, password }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        errorBox.textContent = body.detail || 'שגיאה בהרשמה';
+        errorBox.style.display = 'block';
+        return;
+      }
+
+      location.replace('/static/dashboard.html');
+    });
+  </script>
+
+</body>
+</html>

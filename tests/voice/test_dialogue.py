@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.voice.dialogue.fallbacks import FallbackConfig, FallbackHandler
@@ -332,3 +334,66 @@ class TestNLUClassifierIntegration:
         result = clf.classify("Option B", question_type="mcq")
         assert result.primary.intent_type == IntentType.ANSWER
         assert result.primary.extracted_value == "B"
+
+
+class TestMcqBranchRules:
+    """MCQ answers are stored as an option letter (A/B/C/D), but branch rules
+    are typically authored against the literal option text (e.g. 'equals
+    ronaldo') — the rule engine must resolve the letter back to that text."""
+
+    def _make_mcq_question(self, idx: int, prompt: str, options: list[str]) -> QuestionContext:
+        return QuestionContext(
+            question_id=idx + 1,
+            question_key=f"q{idx + 1}",
+            prompt=prompt,
+            question_type="mcq",
+            order_index=idx,
+            config={"options": options},
+        )
+
+    def test_goto_rule_matches_literal_option_text_from_stored_letter(self):
+        q1 = self._make_mcq_question(0, "messi or ronaldo?", ["messi", "ronaldo"])
+        q2 = self._make_mcq_question(1, "argentina or spain?", ["argentina", "spain"])
+        q3 = self._make_mcq_question(2, "BIBI or tibi?", ["BIBI", "tibi"])
+
+        rules = [
+            SimpleNamespace(source_question_id=1, target_question_id=2, operator="equals",
+                             value="messi", action="goto", priority=100),
+            SimpleNamespace(source_question_id=1, target_question_id=3, operator="equals",
+                             value="ronaldo", action="goto", priority=100),
+        ]
+        ctx = FSMContext(
+            session_id="s", campaign_id=1, participant_phone="+1",
+            questions=[q1, q2, q3], branch_rules=rules,
+        )
+        ctx.current_question_index = 0
+        # The NLU/agent layer captures the MCQ answer as a letter ("ronaldo" is
+        # option index 1 -> letter B); the FSM resolves it back to the option
+        # text before storing, so reports show "ronaldo" rather than "B".
+        ctx.pending_answer = "B"
+
+        dm = DialogueManager()
+        ctx, action, text = dm._accept_pending_answer(ctx)
+
+        assert ctx.answers["q1"] == "ronaldo"
+        assert ctx.current_question is q3, "ronaldo should skip q2 straight to q3 per the branch rule"
+
+    def test_goto_rule_still_matches_when_answer_letter_used_directly(self):
+        q1 = self._make_mcq_question(0, "messi or ronaldo?", ["messi", "ronaldo"])
+        q2 = self._make_mcq_question(1, "argentina or spain?", ["argentina", "spain"])
+
+        rules = [
+            SimpleNamespace(source_question_id=1, target_question_id=None, operator="equals",
+                             value="A", action="end", priority=100),
+        ]
+        ctx = FSMContext(
+            session_id="s", campaign_id=1, participant_phone="+1",
+            questions=[q1, q2], branch_rules=rules,
+        )
+        ctx.current_question_index = 0
+        ctx.pending_answer = "A"
+
+        dm = DialogueManager()
+        ctx, action, text = dm._accept_pending_answer(ctx)
+
+        assert ctx.state == DialogueState.DONE

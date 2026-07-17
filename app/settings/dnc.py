@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..auth.deps import require_role
 from ..database import get_db
-from ..models import DoNotCallEntry, SettingsAuditEntry
+from ..models import DoNotCallEntry, SettingsAuditEntry, User
 
 router = APIRouter(prefix="/api/settings/dnc", tags=["settings"])
 
@@ -57,8 +57,12 @@ def list_dnc(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
     ]
 
 
-@router.post("", dependencies=[Depends(require_role("admin", "operator"))])
-def add_dnc(body: DncCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
+@router.post("")
+def add_dnc(
+    body: DncCreate,
+    user: User = Depends(require_role("admin", "operator")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     normalized = normalize_phone(body.phone_number)
     if not normalized:
         raise HTTPException(status_code=400, detail="phone_number is required")
@@ -68,19 +72,39 @@ def add_dnc(body: DncCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
 
     entry = DoNotCallEntry(phone_number=normalized, reason=body.reason, added_by=body.added_by)
     db.add(entry)
-    db.add(SettingsAuditEntry(category="dnc", action="create", actor=body.added_by, detail=normalized))
+    db.add(
+        SettingsAuditEntry(
+            organization_id=user.organization_id,
+            category="dnc",
+            action="create",
+            actor=body.added_by,
+            detail=normalized,
+        )
+    )
     db.commit()
     db.refresh(entry)
     return {"id": entry.id, "phone_number": entry.phone_number, "already_existed": False}
 
 
-@router.delete("/{entry_id}", dependencies=[Depends(require_role("admin", "operator"))])
-def remove_dnc(entry_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+@router.delete("/{entry_id}")
+def remove_dnc(
+    entry_id: int,
+    user: User = Depends(require_role("admin", "operator")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     entry = db.query(DoNotCallEntry).filter(DoNotCallEntry.id == entry_id).first()
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     phone = entry.phone_number
     db.delete(entry)
-    db.add(SettingsAuditEntry(category="dnc", action="delete", actor=None, detail=phone))
+    db.add(
+        SettingsAuditEntry(
+            organization_id=user.organization_id,
+            category="dnc",
+            action="delete",
+            actor=user.email,
+            detail=phone,
+        )
+    )
     db.commit()
     return {"deleted": True, "phone_number": phone}

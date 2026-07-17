@@ -8,17 +8,18 @@ from sqlalchemy.orm import Session
 
 from ..auth.deps import require_role
 from ..database import get_db
-from ..models import SettingsAuditEntry
+from ..models import SettingsAuditEntry, User
 
 router = APIRouter(prefix="/api/settings/audit", tags=["settings"])
 
 
-@router.get("", dependencies=[Depends(require_role("admin"))])
+@router.get("")
 def list_audit_entries(
     category: str | None = Query(default=None),
+    admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    q = db.query(SettingsAuditEntry)
+    q = db.query(SettingsAuditEntry).filter(SettingsAuditEntry.organization_id == admin.organization_id)
     if category:
         q = q.filter(SettingsAuditEntry.category == category)
     rows = q.order_by(SettingsAuditEntry.created_at.desc()).all()

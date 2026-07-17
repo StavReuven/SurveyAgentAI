@@ -85,6 +85,18 @@
         </div>
       </div>
 
+      <article class="subpanel" style="margin: 16px 0;">
+        <h3>הגדרות סקר</h3>
+        <form id="campaign-settings-form" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group"><label>שם הסקר</label><input name="name" minlength="2" /></div>
+          <div class="form-group"><label>שפה (למשל: he, en)</label><input name="language" /></div>
+          <div class="form-group"><label>אזור זמן</label><input name="timezone" /></div>
+          <div class="form-group"><label>טקסט יאשר הקלטה (Consent)</label><input name="consent_text" /></div>
+          <div class="form-group" style="grid-column: span 2;"><label>הקשר דומייני לסוקר AI (אופציונלי)</label><textarea name="description" rows="3" style="width:100%; resize:vertical;"></textarea></div>
+          <div class="form-group" style="grid-column: span 2;"><button type="submit" class="btn-primary">שמור הגדרות</button></div>
+        </form>
+      </article>
+
       <div class="builder-grid">
         <article class="subpanel">
           <h3>שאלות (Rating/MCQ/Text)</h3>

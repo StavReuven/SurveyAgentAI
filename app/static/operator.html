@@ -4,8 +4,11 @@
   <meta charset="UTF-8" />
   <title>קונסול מנהל - VoiceSurvey AI</title>
   <link rel="stylesheet" href="/static/styles.css" />
-  <!-- Twilio Voice SDK for WebRTC operator audio -->
-  <script src="https://sdk.twilio.com/js/voice/releases/2.11.1/twilio.min.js"></script>
+  <!-- Twilio Voice SDK for WebRTC operator audio.
+       sdk.twilio.com no longer serves these releases directly (403/AccessDenied);
+       the SDK is now only published to npm as @twilio/voice-sdk, so we load the
+       same UMD bundle via jsDelivr's npm mirror instead. -->
+  <script src="https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2/dist/twilio.min.js"></script>
   <style>
     .badge-reason { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; }
     .reason-profanity        { background:#fee2e2; color:#b91c1c; }
@@ -330,13 +333,20 @@ async function initWebRTC() {
       debug: false,
     });
 
-    twilioDevice.on('ready', () => {
+    // Voice SDK v2.x fires 'registered' (not the old v1.x 'ready' event).
+    twilioDevice.on('registered', () => {
       webrtcReady = true;
       setBadge('webrtc-ok', '🎙️ WebRTC: מוכן');
     });
 
+    twilioDevice.on('unregistered', () => {
+      webrtcReady = false;
+      setBadge('webrtc-off', '🎙️ WebRTC: מנותק');
+    });
+
     twilioDevice.on('error', (err) => {
       console.error('Twilio Device error:', err);
+      webrtcReady = false;
       setBadge('webrtc-off', '🎙️ WebRTC: שגיאה');
     });
 
@@ -523,7 +533,7 @@ function sessionCard(s) {
     <div class="actions">
       ${!takenOver
         ? `<button class="btn-takeover" onclick="takeover('${s.session_id}')">🎧 השתלט</button>`
-        : (!isActiveCall ? `<button class="btn-return" onclick="returnToAgent('${s.session_id}')">🤖 החזר לסוכן</button>` : '')}
+        : `<button class="btn-return" onclick="returnToAgent('${s.session_id}')">🤖 החזר לסוכן</button>`}
       ${!isActiveCall ? `<button class="btn-hangup" onclick="hangup('${s.session_id}')">📵 נתק שיחה</button>` : ''}
     </div>
   </div>`;
@@ -572,7 +582,7 @@ async function connectToConference(sessionId, conferenceRoom) {
   try {
     setBadge('webrtc-ok', '🎙️ WebRTC: מתחבר…');
     const call = await twilioDevice.connect({
-      params: { room: conferenceRoom },
+      params: { room: conferenceRoom, role: 'operator' },
     });
 
     call.on('accept', () => {
@@ -614,11 +624,9 @@ function disconnectCall(sessionId) {
 }
 
 async function returnToAgent(sessionId) {
-  if (activeCall && activeSessionId === sessionId) {
-    activeCall.disconnect();
-    activeCall = null;
-    activeSessionId = null;
-  }
+  // Remove the caller from the conference BEFORE disconnecting our own leg:
+  // the operator's leg has endConferenceOnExit=true, so leaving first could
+  // end the whole conference before the backend can remove the caller alone.
   // Notify caller BEFORE closing the WS so the message arrives
   _notifyCallerAndClose(sessionId, 'return_to_agent', 'הועבר חזרה לסוכן AI — המשך הסקר.');
   await fetch(`${BASE}/api/operator/sessions/${sessionId}/return`, {
@@ -626,6 +634,12 @@ async function returnToAgent(sessionId) {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({operator_id: operatorId()}),
   });
+
+  if (activeCall && activeSessionId === sessionId) {
+    activeCall.disconnect();
+    activeCall = null;
+    activeSessionId = null;
+  }
   await loadQueue();
 }
 

@@ -19,8 +19,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from ..auth.deps import get_current_user
 from ..database import get_db
-from ..models import CallLog, Campaign, Participant
+from ..models import CallLog, Campaign, Participant, User
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -47,8 +48,16 @@ def _period_start(period: str) -> datetime | None:
     return None  # "all"
 
 
-def _base_query(db: Session, campaign_id: int | None, period: str):
-    q = db.query(CallLog)
+def _org_campaign_ids(db: Session, organization_id: int | None) -> set[int]:
+    return {
+        c.id for c in db.query(Campaign.id).filter(Campaign.organization_id == organization_id).all()
+    }
+
+
+def _base_query(db: Session, campaign_id: int | None, period: str, organization_id: int | None):
+    q = db.query(CallLog).join(Campaign, Campaign.id == CallLog.campaign_id).filter(
+        Campaign.organization_id == organization_id
+    )
     if campaign_id:
         q = q.filter(CallLog.campaign_id == campaign_id)
     since = _period_start(period)
@@ -63,10 +72,12 @@ def _base_query(db: Session, campaign_id: int | None, period: str):
 def get_kpis(
     campaign_id: int | None = Query(default=None),
     period: str = Query(default="all", pattern="^(today|week|month|all)$"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """SAA-101 — Return KPI card values with optional campaign + period filters."""
-    q = _base_query(db, campaign_id, period)
+    q = _base_query(db, campaign_id, period, user.organization_id)
+    org_campaign_ids = _org_campaign_ids(db, user.organization_id)
 
     total_calls   = q.count()
     completed     = q.filter(CallLog.status == "completed").count()
@@ -78,7 +89,8 @@ def get_kpis(
     # live active calls from in-memory store (SAA-109 source of truth)
     live_count = sum(
         1 for s in _live_sessions.values()
-        if (campaign_id is None or s.get("campaign_id") == campaign_id)
+        if s.get("campaign_id") in org_campaign_ids
+        and (campaign_id is None or s.get("campaign_id") == campaign_id)
         and not s.get("completed_at")
     )
 
@@ -87,7 +99,8 @@ def get_kpis(
     # Average rapport score (avg confidence from completed calls)
     avg_rapport = (
         db.query(func.avg(CallLog.rapport_score))
-        .filter(CallLog.rapport_score.isnot(None))
+        .join(Campaign, Campaign.id == CallLog.campaign_id)
+        .filter(Campaign.organization_id == user.organization_id, CallLog.rapport_score.isnot(None))
         .scalar()
     )
 
@@ -95,8 +108,12 @@ def get_kpis(
     all_ratings: list[float] = []
     logs_with_answers = (
         db.query(CallLog.answers)
-        .filter(CallLog.answers.isnot(None))
-        .filter(CallLog.status == "completed")
+        .join(Campaign, Campaign.id == CallLog.campaign_id)
+        .filter(
+            Campaign.organization_id == user.organization_id,
+            CallLog.answers.isnot(None),
+            CallLog.status == "completed",
+        )
         .all()
     )
     for (answers,) in logs_with_answers:
@@ -117,13 +134,23 @@ def get_kpis(
         duration_expr = (func.julianday(CallLog.ended_at) - func.julianday(CallLog.started_at)) * 86400.0
     avg_duration_seconds = (
         db.query(func.avg(duration_expr))
-        .filter(CallLog.ended_at.isnot(None))
+        .join(Campaign, Campaign.id == CallLog.campaign_id)
+        .filter(Campaign.organization_id == user.organization_id, CallLog.ended_at.isnot(None))
         .scalar()
     )
 
     # Campaign counts (SAA-103 filter context)
-    active_campaigns = db.query(func.count(Campaign.id)).filter(Campaign.status == "active").scalar()
-    total_participants = db.query(func.count(Participant.id)).scalar()
+    active_campaigns = (
+        db.query(func.count(Campaign.id))
+        .filter(Campaign.organization_id == user.organization_id, Campaign.status == "active")
+        .scalar()
+    )
+    total_participants = (
+        db.query(func.count(Participant.id))
+        .join(Campaign, Campaign.id == Participant.campaign_id)
+        .filter(Campaign.organization_id == user.organization_id)
+        .scalar()
+    )
 
     return {
         "total_calls": total_calls,
@@ -149,10 +176,12 @@ def get_kpis(
 def get_call_outcomes(
     campaign_id: int | None = Query(default=None),
     period: str = Query(default="all", pattern="^(today|week|month|all)$"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """SAA-105 — Aggregate call counts grouped by outcome status (for pie chart)."""
-    q = _base_query(db, campaign_id, period)
+    q = _base_query(db, campaign_id, period, user.organization_id)
+    org_campaign_ids = _org_campaign_ids(db, user.organization_id)
 
     rows = (
         q.with_entities(CallLog.status, func.count(CallLog.id).label("count"))
@@ -164,7 +193,8 @@ def get_call_outcomes(
     # Add live active sessions not yet in DB
     live_active = sum(
         1 for s in _live_sessions.values()
-        if (campaign_id is None or s.get("campaign_id") == campaign_id)
+        if s.get("campaign_id") in org_campaign_ids
+        and (campaign_id is None or s.get("campaign_id") == campaign_id)
         and not s.get("completed_at")
     )
     counts["active"] = counts.get("active", 0) + live_active
@@ -183,10 +213,11 @@ def get_call_outcomes(
 def get_calls_by_hour(
     campaign_id: int | None = Query(default=None),
     period: str = Query(default="today", pattern="^(today|week|month|all)$"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """SAA-105 — Calls started per hour bucket (for bar chart)."""
-    q = _base_query(db, campaign_id, period)
+    q = _base_query(db, campaign_id, period, user.organization_id)
 
     if db.bind.dialect.name == "postgresql":
         hour_expr = func.to_char(CallLog.started_at, "HH24:00")
@@ -219,10 +250,15 @@ def get_calls_by_hour(
 @router.get("/live-calls")
 def get_live_calls(
     campaign_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """SAA-109 — Snapshot of all currently active voice sessions."""
+    org_campaign_ids = _org_campaign_ids(db, user.organization_id)
     sessions = []
     for sid, s in _live_sessions.items():
+        if s.get("campaign_id") not in org_campaign_ids:
+            continue
         if campaign_id and s.get("campaign_id") != campaign_id:
             continue
         if s.get("completed_at"):
@@ -264,7 +300,15 @@ def get_live_calls(
 # ── SAA-103: Campaign list for filter dropdown ────────────────────────────────
 
 @router.get("/campaigns")
-def get_campaigns_for_filter(db: Session = Depends(get_db)) -> list[dict]:
+def get_campaigns_for_filter(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
     """SAA-103 — Campaign list for dashboard filter dropdown."""
-    campaigns = db.query(Campaign).order_by(Campaign.name).all()
+    campaigns = (
+        db.query(Campaign)
+        .filter(Campaign.organization_id == user.organization_id)
+        .order_by(Campaign.name)
+        .all()
+    )
     return [{"id": c.id, "name": c.name, "status": c.status} for c in campaigns]

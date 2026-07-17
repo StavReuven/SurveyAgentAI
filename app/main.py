@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
     Answer,
+    AnswerFactCheck,
     AnswerLabel,
     BranchRule,
     CallLog,
@@ -28,7 +30,10 @@ from .models import (
     Campaign,
     CampaignExecution,
     ConversationTurn,
+    CrossSurveyMatch,
     DemographicWeight,
+    EntityMention,
+    FreeTextAnalysis,
     FreeTextLabel,
     Interviewee,
     Participant,
@@ -36,17 +41,22 @@ from .models import (
 )
 from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
+from .voice.nlu.schema import IntentType
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
 from .voice.escalation import get_escalation_queue
 from .voice.pipeline import VoicePipeline
 from .analytics.router import router as analytics_router, global_router as analytics_global_router
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
+from .auth.deps import get_current_user
 from .auth.router import router as auth_router
+from .models import User
 from .operator.router import router as operator_router
 from .settings.router import router as settings_router
 from .settings.dnc import router as settings_dnc_router
 from .settings.audit import router as settings_audit_router
 from .settings.dnc import is_blocked
+from .telephony.gateway import get_gateway
+from .telephony.router import set_voice_sessions_store
 from .telephony.router import router as telephony_router
 from .telephony.session_store import get_store as get_telephony_store
 from .telephony.timeouts import start_watchdog
@@ -71,6 +81,9 @@ from .schemas import (
 
 Base.metadata.create_all(bind=engine)
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 _scheduler_task: asyncio.Task | None = None
 _telephony_watchdog: asyncio.Task | None = None
 
@@ -78,9 +91,13 @@ _telephony_watchdog: asyncio.Task | None = None
 def _migrate_db() -> None:
     """Add columns that were introduced after initial schema creation."""
     new_cols = [
-        ("call_logs",  "voice_metrics", "JSON"),
-        ("call_logs",  "history",       "JSON"),
-        ("campaigns",  "description",   "TEXT"),
+        ("call_logs",  "voice_metrics",    "JSON"),
+        ("call_logs",  "history",          "JSON"),
+        ("campaigns",  "description",      "TEXT"),
+        ("campaigns",  "organization_id",  "INTEGER"),
+        ("users",      "organization_id",  "INTEGER"),
+        ("settings_audit_entries", "organization_id", "INTEGER"),
+        ("call_attempts", "session_id", "VARCHAR(64)"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_cols:
@@ -88,7 +105,59 @@ def _migrate_db() -> None:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
                 conn.commit()
             except Exception:
-                pass  # column already exists — ignore
+                # Column already exists — ignore, but roll back first: on
+                # Postgres a failed statement poisons the whole transaction,
+                # so every later statement on this connection would silently
+                # fail too (including genuinely new columns) without this.
+                conn.rollback()
+
+        # call_attempts.outcome/finished_at predate the async auto-dial
+        # scheduler: an attempt now starts as "pending" (ringing/in-call) and
+        # is only finalized once the call actually ends via the status
+        # webhook, so finished_at must be nullable and the enum needs 'pending'.
+        try:
+            conn.execute(text("ALTER TYPE call_outcome ADD VALUE IF NOT EXISTS 'pending'"))
+            conn.commit()
+        except Exception:
+            conn.rollback()  # not Postgres, or value already present
+        try:
+            conn.execute(text("ALTER TYPE call_outcome ADD VALUE IF NOT EXISTS 'not_now'"))
+            conn.commit()
+        except Exception:
+            conn.rollback()  # not Postgres, or value already present
+        try:
+            conn.execute(text("ALTER TABLE call_attempts ALTER COLUMN finished_at DROP NOT NULL"))
+            conn.commit()
+        except Exception:
+            conn.rollback()  # not Postgres, or already nullable
+
+        # Backfill: any campaign/user created before multi-tenancy existed
+        # gets grouped into a single "Legacy" organization so existing data
+        # (and the bootstrap admin) keeps working under the new model.
+        try:
+            legacy = conn.execute(
+                text("SELECT id FROM organizations WHERE name = 'Legacy'")
+            ).fetchone()
+            if legacy is None:
+                conn.execute(
+                    text("INSERT INTO organizations (name, created_at) VALUES ('Legacy', now())")
+                )
+                conn.commit()
+                legacy = conn.execute(
+                    text("SELECT id FROM organizations WHERE name = 'Legacy'")
+                ).fetchone()
+            legacy_id = legacy[0]
+            conn.execute(
+                text("UPDATE campaigns SET organization_id = :oid WHERE organization_id IS NULL"),
+                {"oid": legacy_id},
+            )
+            conn.execute(
+                text("UPDATE users SET organization_id = :oid WHERE organization_id IS NULL"),
+                {"oid": legacy_id},
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()  # organizations table not present yet (fresh DB, nothing to backfill)
 
 
 @asynccontextmanager
@@ -199,9 +268,26 @@ def _next_attempt_eligible(
         return True, attempt_number
 
     last_attempt = attempts[-1]
-    retry_ready_at = last_attempt.finished_at + timedelta(minutes=policy.retry_delay_minutes)
-    cooldown_ready_at = last_attempt.finished_at + timedelta(hours=policy.cooldown_hours)
-    ready_at = max(retry_ready_at, cooldown_ready_at)
+    if last_attempt.finished_at is None:
+        # Still ringing/in-call (async dial flow) — not eligible for a new attempt yet.
+        return False, attempt_number
+
+    # DB DateTime columns aren't timezone-aware, so values read back from
+    # Postgres are naive even though we always write UTC into them — normalize
+    # before comparing against the aware `now_utc`, or this raises TypeError.
+    finished_at = last_attempt.finished_at
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
+
+    retry_ready_at = finished_at + timedelta(minutes=policy.retry_delay_minutes)
+    if last_attempt.outcome == "not_now":
+        # The caller asked to be called back later — honor the short retry
+        # delay only. The long cooldown exists to avoid re-bothering someone
+        # who was already successfully reached, which doesn't apply here.
+        ready_at = retry_ready_at
+    else:
+        cooldown_ready_at = finished_at + timedelta(hours=policy.cooldown_hours)
+        ready_at = max(retry_ready_at, cooldown_ready_at)
     return now_utc >= ready_at, attempt_number
 
 
@@ -211,7 +297,53 @@ def _simulate_call_outcome(participant: Participant) -> tuple[str, str | None]:
     return "success", None
 
 
-def _process_scheduler_tick(db: Session, execution: CampaignExecution):
+async def _dial_participant(db: Session, campaign: Campaign, participant: Participant, attempt_number: int) -> None:
+    """Place a real outbound call for one participant and record a 'pending'
+    CallAttempt — the actual outcome is filled in later by the Twilio status
+    webhook (see webhook_status), since a real call takes time to ring/answer,
+    unlike the old instant-simulated outcome."""
+    now_utc = _utcnow()
+    attempt = CallAttempt(
+        campaign_id=campaign.id,
+        participant_id=participant.id,
+        attempt_number=attempt_number,
+        outcome="pending",
+        started_at=now_utc,
+        finished_at=None,
+    )
+    db.add(attempt)
+    db.flush()
+
+    try:
+        ctx, _result = await _create_and_start_voice_session(
+            campaign, participant.phone_number, participant.locale, db
+        )
+        await get_gateway().initiate_call(
+            to_number=participant.phone_number,
+            campaign_id=campaign.id,
+            session_id=ctx.session_id,
+            store=get_telephony_store(),
+        )
+        attempt.session_id = ctx.session_id
+        participant.status = "contacted"
+        meta = participant.meta or {}
+        meta["last_call_attempt_at"] = now_utc.isoformat()
+        meta["attempt_number"] = attempt_number
+        participant.meta = meta
+    except Exception as exc:
+        attempt.outcome = "failed"
+        attempt.finished_at = _utcnow()
+        attempt.note = f"dial error: {exc}"
+        participant.status = "failed"
+        meta = participant.meta or {}
+        meta["last_call_attempt_at"] = now_utc.isoformat()
+        meta["last_call_outcome"] = "failed"
+        meta["last_call_note"] = attempt.note
+        meta["attempt_number"] = attempt_number
+        participant.meta = meta
+
+
+async def _process_scheduler_tick(db: Session, execution: CampaignExecution):
     campaign = db.get(Campaign, execution.campaign_id)
     if not campaign:
         return
@@ -269,28 +401,7 @@ def _process_scheduler_tick(db: Session, execution: CampaignExecution):
         if is_blocked(db, participant.phone_number):
             continue
 
-        outcome, note = _simulate_call_outcome(participant)
-        db.add(
-            CallAttempt(
-                campaign_id=campaign.id,
-                participant_id=participant.id,
-                attempt_number=attempt_number,
-                outcome=outcome,
-                started_at=now_utc,
-                finished_at=now_utc,
-                note=note,
-            )
-        )
-
-        participant.status = "contacted" if outcome == "success" else "failed"
-        meta = participant.meta or {}
-        meta["last_call_attempt_at"] = now_utc.isoformat()
-        meta["last_call_outcome"] = outcome
-        meta["attempt_number"] = attempt_number
-        if note:
-            meta["last_call_note"] = note
-        participant.meta = meta
-
+        await _dial_participant(db, campaign, participant, attempt_number)
         remaining_budget -= 1
 
     execution.last_tick_at = now_utc
@@ -306,9 +417,18 @@ async def _scheduler_loop():
                 .all()
             )
             for execution in running:
-                _process_scheduler_tick(db, execution)
-            db.commit()
+                try:
+                    await _process_scheduler_tick(db, execution)
+                    db.commit()
+                except Exception:
+                    # One campaign's tick failing must not block every other
+                    # running campaign's tick in the same pass.
+                    logger.exception(
+                        "Scheduler tick failed for campaign %s", execution.campaign_id
+                    )
+                    db.rollback()
         except Exception:
+            logger.exception("Scheduler loop failed")
             db.rollback()
         finally:
             db.close()
@@ -401,9 +521,29 @@ def health():
     return {"status": "ok", "service": "campaign-builder"}
 
 
+def get_owned_campaign(
+    campaign_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Campaign:
+    """Fetch a campaign and verify it belongs to the current user's organization.
+
+    Returns 404 (not 403) for campaigns owned by another organization, so the
+    endpoint doesn't leak which campaign IDs exist for other companies.
+    """
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign or campaign.organization_id != user.organization_id:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
+
+
 @app.post("/api/campaigns", response_model=CampaignOut)
-def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
-    campaign = Campaign(**payload.model_dump())
+def create_campaign(
+    payload: CampaignCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    campaign = Campaign(**payload.model_dump(), organization_id=user.organization_id)
     db.add(campaign)
     db.commit()
     db.refresh(campaign)
@@ -411,12 +551,17 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/campaigns", response_model=list[CampaignOut])
-def list_campaigns(db: Session = Depends(get_db)):
-    return db.query(Campaign).order_by(Campaign.created_at.desc()).all()
+def list_campaigns(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return (
+        db.query(Campaign)
+        .filter(Campaign.organization_id == user.organization_id)
+        .order_by(Campaign.created_at.desc())
+        .all()
+    )
 
 
 @app.get("/api/campaigns/summary", response_model=list[CampaignSummary])
-def list_campaign_summaries(db: Session = Depends(get_db)):
+def list_campaign_summaries(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = (
         db.query(
             Campaign.id,
@@ -427,6 +572,7 @@ def list_campaign_summaries(db: Session = Depends(get_db)):
             func.count(func.distinct(Question.id)).label("question_count"),
             func.count(func.distinct(Participant.id)).label("participant_count"),
         )
+        .filter(Campaign.organization_id == user.organization_id)
         .outerjoin(Question, Question.campaign_id == Campaign.id)
         .outerjoin(Participant, Participant.campaign_id == Campaign.id)
         .group_by(Campaign.id)
@@ -437,19 +583,16 @@ def list_campaign_summaries(db: Session = Depends(get_db)):
 
 
 @app.get("/api/campaigns/{campaign_id}", response_model=CampaignOut)
-def get_campaign(campaign_id: int, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+def get_campaign(campaign: Campaign = Depends(get_owned_campaign)):
     return campaign
 
 
 @app.put("/api/campaigns/{campaign_id}", response_model=CampaignOut)
-def update_campaign(campaign_id: int, payload: CampaignUpdate, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
+def update_campaign(
+    payload: CampaignUpdate,
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
     for key, value in payload.model_dump(exclude_none=True).items():
         setattr(campaign, key, value)
     campaign.updated_at = datetime.now(timezone.utc)
@@ -459,27 +602,57 @@ def update_campaign(campaign_id: int, payload: CampaignUpdate, db: Session = Dep
 
 
 @app.delete("/api/campaigns/{campaign_id}")
-def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+def delete_campaign(
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
+    campaign_id = campaign.id
+
+    # Manually cascade-delete dependents in FK-safe order — none of these
+    # relationships have ON DELETE CASCADE configured at the DB level, so a
+    # bare db.delete(campaign) fails with a ForeignKeyViolation as soon as any
+    # analytics/call data exists for the campaign.
+    answer_ids = [
+        row[0] for row in db.query(Answer.id).filter(Answer.campaign_id == campaign_id).all()
+    ]
+    if answer_ids:
+        db.query(AnswerLabel).filter(AnswerLabel.answer_id.in_(answer_ids)).delete(synchronize_session=False)
+    db.query(AnswerFactCheck).filter(AnswerFactCheck.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(FreeTextAnalysis).filter(FreeTextAnalysis.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(CrossSurveyMatch).filter(
+        (CrossSurveyMatch.source_campaign_id == campaign_id)
+        | (CrossSurveyMatch.target_campaign_id == campaign_id)
+    ).delete(synchronize_session=False)
+    db.query(EntityMention).filter(EntityMention.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(ConversationTurn).filter(ConversationTurn.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(Answer).filter(Answer.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(FreeTextLabel).filter(FreeTextLabel.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(DemographicWeight).filter(DemographicWeight.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(CallAttempt).filter(CallAttempt.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(CallLog).filter(CallLog.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(CallingPolicy).filter(CallingPolicy.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(CampaignExecution).filter(CampaignExecution.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(Participant).filter(Participant.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(BranchRule).filter(BranchRule.campaign_id == campaign_id).delete(synchronize_session=False)
+    db.query(Question).filter(Question.campaign_id == campaign_id).delete(synchronize_session=False)
+
     db.delete(campaign)
     db.commit()
     return {"deleted": True}
 
 
 @app.post("/api/campaigns/{campaign_id}/duplicate", response_model=CampaignOut)
-def duplicate_campaign(campaign_id: int, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
+def duplicate_campaign(
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
     clone = Campaign(
         name=f"{campaign.name} (Copy)",
         language=campaign.language,
         timezone=campaign.timezone,
         consent_text=campaign.consent_text,
         status="draft",
+        organization_id=campaign.organization_id,
     )
     db.add(clone)
     db.flush()
@@ -522,11 +695,11 @@ def duplicate_campaign(campaign_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/campaigns/{campaign_id}/pause", response_model=CampaignOut)
-def pause_campaign(campaign_id: int, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
+def pause_campaign(
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
+    campaign_id = campaign.id
     execution = _get_or_create_execution(db, campaign_id)
     if execution.state == "stopped":
         raise HTTPException(status_code=409, detail="Campaign is stopped. Use start to run it again")
@@ -540,11 +713,11 @@ def pause_campaign(campaign_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/campaigns/{campaign_id}/resume", response_model=CampaignOut)
-def resume_campaign(campaign_id: int, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
+def resume_campaign(
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
+    campaign_id = campaign.id
     execution = _get_or_create_execution(db, campaign_id)
     if execution.state == "stopped":
         raise HTTPException(status_code=409, detail="Campaign is stopped. Use start to run it again")
@@ -948,6 +1121,9 @@ _pipeline = VoicePipeline(mirroring_settings=_mirroring_settings, agent_service=
 
 # Wire session store into dashboard router so live-calls endpoint can read it.
 set_live_sessions_store(_voice_sessions)
+# Wire session store into telephony router so TwiML handlers can speak the
+# pipeline's real greeting/question instead of a generic hardcoded line.
+set_voice_sessions_store(_voice_sessions)
 
 
 class VoiceSessionStartRequest(BaseModel):
@@ -1016,27 +1192,22 @@ def _load_question_contexts(campaign_id: int, db: Session) -> list[QuestionConte
     ]
 
 
-@app.post("/api/campaigns/{campaign_id}/voice/sessions")
-async def start_voice_session(
-    campaign_id: int,
-    payload: VoiceSessionStartRequest,
-    db: Session = Depends(get_db),
+async def _create_and_start_voice_session(
+    campaign: Campaign,
+    participant_phone: str,
+    locale: str | None,
+    db: Session,
 ):
-    """SAA-50/SAA-51: Start a new voice survey session for a campaign participant."""
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    if campaign.status != "active":
-        raise HTTPException(status_code=400, detail="Campaign is not active")
-
-    question_contexts = _load_question_contexts(campaign_id, db)
+    """Shared by the manual voice-session API and the campaign auto-dial
+    scheduler: builds the pipeline session, registers it, and logs the call."""
+    question_contexts = _load_question_contexts(campaign.id, db)
     if not question_contexts:
-        raise HTTPException(status_code=400, detail="Campaign has no questions")
+        raise ValueError("Campaign has no questions")
 
     # Load branch rules and convert to plain objects so they survive session close
     _branch_rule_rows = (
         db.query(BranchRule)
-        .filter(BranchRule.campaign_id == campaign_id)
+        .filter(BranchRule.campaign_id == campaign.id)
         .order_by(BranchRule.priority.asc())
         .all()
     )
@@ -1053,12 +1224,12 @@ async def start_voice_session(
     ]
 
     ctx = _pipeline.create_session(
-        campaign_id=campaign_id,
-        participant_phone=payload.participant_phone,
+        campaign_id=campaign.id,
+        participant_phone=participant_phone,
         questions=question_contexts,
         branch_rules=branch_rules,
         language=campaign.language,
-        locale=payload.locale,
+        locale=locale,
         campaign_name=campaign.name,
         campaign_description=campaign.description or "",
     )
@@ -1067,21 +1238,43 @@ async def start_voice_session(
 
     _voice_sessions[ctx.session_id] = {
         "ctx": ctx,
-        "campaign_id": campaign_id,
+        "campaign_id": campaign.id,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "tts_metrics": [],
         "stt_metrics": [],
+        "last_response_text": result.response_text,
     }
 
     # SAA-101: persist call log for dashboard metrics
     call_log = CallLog(
-        campaign_id=campaign_id,
+        campaign_id=campaign.id,
         session_id=ctx.session_id,
         status="active",
         started_at=datetime.now(timezone.utc),
     )
     db.add(call_log)
     db.commit()
+
+    return ctx, result
+
+
+@app.post("/api/campaigns/{campaign_id}/voice/sessions")
+async def start_voice_session(
+    campaign_id: int,
+    payload: VoiceSessionStartRequest,
+    db: Session = Depends(get_db),
+):
+    """SAA-50/SAA-51: Start a new voice survey session for a campaign participant."""
+    campaign = db.get(Campaign, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status != "active":
+        raise HTTPException(status_code=400, detail="Campaign is not active")
+
+    try:
+        ctx, result = await _create_and_start_voice_session(campaign, payload.participant_phone, payload.locale, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return {
         "session_id": ctx.session_id,
@@ -1234,7 +1427,15 @@ async def process_voice_turn(
             # so the dashboard cumulative count never drops.
             if not call_was_escalated and "escalat" not in action:
                 if "closing" in action or "end" in action:
-                    call_log.status = "not_now" if "not_now" in str(ctx.state) else "completed"
+                    # ctx.state is always DialogueState.DONE at this point regardless
+                    # of why the call closed — the actual reason (e.g. the caller
+                    # asked to be called back later) is only visible in the intent
+                    # logged on the last "turn" history entry, not in ctx.state.
+                    last_intent = next(
+                        (e.get("intent") for e in reversed(ctx.history) if e.get("event") == "turn"),
+                        None,
+                    )
+                    call_log.status = "not_now" if last_intent == IntentType.NOT_NOW else "completed"
                 else:
                     call_log.status = "completed"
             elif call_was_escalated:
@@ -1259,6 +1460,7 @@ async def process_voice_turn(
         }
         session["last_mirroring"] = mirroring_resp
 
+    session["last_response_text"] = result.response_text
     esc = result.escalation_snapshot
     return {
         "session_id": session_id,

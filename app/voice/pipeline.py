@@ -204,8 +204,17 @@ class VoicePipeline:
             #   (agent already acknowledged the answer AND introduced the next question)
             # - SPEAK_QUESTION + agent only has short ack → prepend to FSM question text
             # - Any other action → use agent text (errors, clarification, opt-out, etc.)
+            #
+            # `next_q` was peeked BEFORE _dm.process() ran, via naive linear order —
+            # it doesn't know about branch rules. If the FSM actually branched
+            # elsewhere (ctx.current_question != next_q), the agent's transition
+            # text names the wrong question, so it must not be used or merged in —
+            # keep the FSM's own (correctly branched) response_text untouched.
+            branched = next_q is not None and ctx.current_question is not next_q
             if agent_decision and agent_decision.response_text:
-                if action == DialogueAction.SPEAK_QUESTION:
+                if action == DialogueAction.SPEAK_QUESTION and branched:
+                    pass
+                elif action == DialogueAction.SPEAK_QUESTION:
                     # If agent built a full transition (includes next question intro), skip FSM text
                     if next_q and len(agent_decision.response_text) > 40:
                         response_text = agent_decision.response_text
