@@ -23,7 +23,7 @@ import sys
 sys.path.insert(0, '.')
 
 from app.database import SessionLocal
-from app.models import Answer, Question, CrossSurveyMatch
+from app.models import Answer, Campaign, Question, CrossSurveyMatch
 
 # ── Factual extractors ────────────────────────────────────────────────────────
 # Each entry: (topic_key, extraction_regex, question_keywords)
@@ -171,6 +171,11 @@ def run_matching():
 
         print(f"Checking {len(free_texts)} free-text answers for factual data...\n")
 
+        # Cross-survey matching must never cross organization boundaries — an
+        # answer from one company's survey should not leak into another
+        # company's campaign data just because the question wording matches.
+        campaign_org = {c.id: c.organization_id for c in db.query(Campaign).all()}
+
         all_questions = db.query(Question).all()
         questions_by_campaign: dict[int, list[Question]] = {}
         for q in all_questions:
@@ -192,6 +197,8 @@ def run_matching():
 
             for campaign_id, questions in questions_by_campaign.items():
                 if campaign_id == answer.campaign_id:
+                    continue
+                if campaign_org.get(campaign_id) != campaign_org.get(answer.campaign_id):
                     continue
 
                 for q in questions:

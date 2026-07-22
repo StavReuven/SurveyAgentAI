@@ -83,10 +83,20 @@ async def find_cross_survey_matches(
     if not answers:
         return 0
 
-    # Build: question_id → Question for all other campaigns
+    source_campaign = db.get(Campaign, campaign_id)
+    if not source_campaign:
+        return 0
+
+    # Cross-survey matching must stay within the source campaign's own
+    # organization — otherwise an answer from one company's survey could
+    # get materialized as an Answer row in another company's campaign.
     other_questions = (
         db.query(Question)
-        .filter(Question.campaign_id != campaign_id)
+        .join(Campaign, Campaign.id == Question.campaign_id)
+        .filter(
+            Question.campaign_id != campaign_id,
+            Campaign.organization_id == source_campaign.organization_id,
+        )
         .all()
     )
     if not other_questions:
