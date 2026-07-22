@@ -39,6 +39,7 @@ from .models import (
     Participant,
     Question,
 )
+from .intelligence.cross_survey_facts import match_answer
 from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.nlu.schema import IntentType
@@ -1527,6 +1528,7 @@ async def process_voice_turn(
         # matching (run_cross_survey.py) all read from the `answers` table,
         # so without this they silently never see any data from real calls.
         questions_by_key = {q.question_key: q for q in ctx.questions}
+        saved_answers: list[Answer] = []
         for key, value in ctx.answers.items():
             q = questions_by_key.get(key)
             if not q:
@@ -1543,8 +1545,9 @@ async def process_voice_turn(
             if existing_answer:
                 existing_answer.raw_text = value
                 existing_answer.normalized_value = value
+                saved_answers.append(existing_answer)
             else:
-                db.add(Answer(
+                new_answer = Answer(
                     session_id=session_id,
                     campaign_id=campaign_id,
                     question_id=q.question_id,
@@ -1552,7 +1555,9 @@ async def process_voice_turn(
                     raw_text=value,
                     normalized_value=value,
                     answer_type=q.question_type,
-                ))
+                )
+                db.add(new_answer)
+                saved_answers.append(new_answer)
 
         # Rapport = avg STT confidence from caller_input events
         confidences = [
@@ -1606,6 +1611,15 @@ async def process_voice_turn(
             # (escalated sessions stay until the operator explicitly handles them)
             if not call_was_escalated:
                 get_escalation_queue().remove(session_id)
+
+            # Automatic cross-survey matching — previously this only ever ran
+            # via a manual `python run_cross_survey.py` scan of the whole DB;
+            # now it runs right when a call finishes, scoped to just this
+            # call's own answers instead of rescanning everything.
+            db.flush()  # assign IDs to any newly-created Answer rows above
+            for saved_answer in saved_answers:
+                if saved_answer.answer_type == "free_text":
+                    match_answer(db, saved_answer)
         db.commit()
 
     # SAA-78/82: include mirroring decision + monitoring flags in turn response
