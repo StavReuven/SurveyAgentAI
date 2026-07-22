@@ -285,7 +285,11 @@ async function loadCampaignCards() {
 
 async function openCampaign(id, cardElement) {
   state.selectedCampaignId = id;
-  const campaign = await api(`/api/campaigns/${id}`);
+  // One round-trip instead of 7 sequential ones — each request pays full
+  // network latency against the remote DB, so chaining them serially was
+  // the main cause of the multi-second delay opening a campaign.
+  const full = await api(`/api/campaigns/${id}/full`);
+  const campaign = full.campaign;
   builderTitle.textContent = `Campaign Builder: ${campaign.name}`;
 
   const settingsForm = document.getElementById("campaign-settings-form");
@@ -306,22 +310,20 @@ async function openCampaign(id, cardElement) {
   resetDirty();
   builderPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 
-  state.questions = await api(`/api/campaigns/${id}/questions`);
+  state.questions = full.questions;
   renderQuestions();
 
-  const rules = await api(`/api/campaigns/${id}/rules`);
-  renderRules(rules);
+  renderRules(full.rules);
 
-  const participants = await api(`/api/campaigns/${id}/participants`);
-  renderParticipants(participants);
+  renderParticipants(full.participants);
 
-  state.execution = await api(`/api/campaigns/${id}/execution`);
+  state.execution = full.execution;
   renderExecutionStatus();
 
-  state.policy = await api(`/api/campaigns/${id}/policy`);
+  state.policy = full.policy;
   renderPolicyForm();
 
-  await loadAttempts(id);
+  renderAttempts(full.attempts);
 }
 
 function getSelectedCampaignId() {

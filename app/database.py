@@ -19,7 +19,19 @@ _connect_args = (
     else {"options": "-c timezone=utc"}
 )
 
-engine = create_engine(DATABASE_URL, connect_args=_connect_args)
+# Keep connections alive across requests instead of reopening one per
+# request — each new connection to a remote DB (e.g. Neon) pays a full
+# network round-trip plus SSL handshake, which is the main source of the
+# "every click takes seconds" feel once the DB is no longer on localhost.
+# pool_pre_ping guards against Neon closing idle connections server-side.
+_pool_kwargs = {} if DATABASE_URL.startswith("sqlite") else {
+    "pool_pre_ping": True,
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_recycle": 300,
+}
+
+engine = create_engine(DATABASE_URL, connect_args=_connect_args, **_pool_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

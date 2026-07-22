@@ -587,6 +587,93 @@ def get_campaign(campaign: Campaign = Depends(get_owned_campaign)):
     return campaign
 
 
+@app.get("/api/campaigns/{campaign_id}/full")
+def get_campaign_full(
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
+    """Everything the campaign builder page needs, in one round-trip.
+
+    The builder used to fire ~7 sequential requests (campaign, questions,
+    rules, participants, execution, policy, attempts) — each one paying a
+    full network round-trip. Against a remote DB (vs. the near-zero latency
+    of localhost) that serial chain alone added several seconds per page
+    open, so it's collapsed into a single response here.
+    """
+    campaign_id = campaign.id
+
+    execution = _get_or_create_execution(db, campaign_id)
+    policy = _get_or_create_policy(db, campaign_id)
+    db.commit()
+    db.refresh(execution)
+    db.refresh(policy)
+
+    questions = (
+        db.query(Question)
+        .filter(Question.campaign_id == campaign_id)
+        .order_by(Question.order_index.asc())
+        .all()
+    )
+    rules = (
+        db.query(BranchRule)
+        .filter(BranchRule.campaign_id == campaign_id)
+        .order_by(BranchRule.priority.asc(), BranchRule.id.asc())
+        .all()
+    )
+    participants = (
+        db.query(Participant)
+        .filter(Participant.campaign_id == campaign_id)
+        .order_by(Participant.id.desc())
+        .all()
+    )
+    attempt_rows = (
+        db.query(CallAttempt, Participant.phone_number)
+        .join(Participant, Participant.id == CallAttempt.participant_id)
+        .filter(CallAttempt.campaign_id == campaign_id)
+        .order_by(CallAttempt.id.desc())
+        .limit(30)
+        .all()
+    )
+
+    return {
+        "campaign": CampaignOut.model_validate(campaign),
+        "questions": [QuestionOut.model_validate(q) for q in questions],
+        "rules": [RuleOut.model_validate(r) for r in rules],
+        "participants": [ParticipantOut.model_validate(p) for p in participants],
+        "execution": CampaignExecutionOut(
+            campaign_id=campaign_id,
+            state=execution.state,
+            started_at=execution.started_at,
+            paused_at=execution.paused_at,
+            stopped_at=execution.stopped_at,
+            last_tick_at=execution.last_tick_at,
+        ),
+        "policy": CallingPolicyOut(
+            campaign_id=campaign_id,
+            window_start_hour=policy.window_start_hour,
+            window_end_hour=policy.window_end_hour,
+            max_attempts=policy.max_attempts,
+            retry_delay_minutes=policy.retry_delay_minutes,
+            cooldown_hours=policy.cooldown_hours,
+            max_calls_per_minute=policy.max_calls_per_minute,
+            enabled=policy.enabled,
+        ),
+        "attempts": [
+            CallAttemptOut(
+                id=attempt.id,
+                participant_id=attempt.participant_id,
+                participant_phone=phone,
+                attempt_number=attempt.attempt_number,
+                outcome=attempt.outcome,
+                started_at=attempt.started_at,
+                finished_at=attempt.finished_at,
+                note=attempt.note,
+            )
+            for attempt, phone in attempt_rows
+        ],
+    }
+
+
 @app.put("/api/campaigns/{campaign_id}", response_model=CampaignOut)
 def update_campaign(
     payload: CampaignUpdate,
