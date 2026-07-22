@@ -204,8 +204,65 @@ async function loadAttempts(campaignId) {
   renderAttempts(attempts);
 }
 
+function buildCampaignCard(c, { pending = false } = {}) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.dataset.campaignId = c.id;
+  card.style.display = "flex";
+  card.style.flexDirection = "column";
+  if (pending) {
+    card.style.opacity = "0.6";
+  }
+
+  let statusColor = "background:#f1f5f9; color:#475569;";
+  let statusText = "טיוטה";
+  if(c.status === "active") { statusColor = "background:#dcfce7; color:#166534;"; statusText="פעיל"; }
+  if(c.status === "paused") { statusColor = "background:#fef3c7; color:#b45309;"; statusText="מושהה"; }
+
+  card.innerHTML = `
+    <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-weight:bold; font-size:16px;">${c.name}</span>
+      <div style="display: flex; gap: 8px;">
+        <span class="status-badge" style="${statusColor}; padding:4px 8px; border-radius:12px; font-size:11px;">${statusText}</span>
+      </div>
+    </div>
+
+    <div class="grid-2 camp-stats" style="display:grid; grid-template-columns:1fr 1fr; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 16px 0; padding: 12px 0;">
+      <div style="text-align:center;">
+        <div class="camp-stats-num" style="font-size: 24px; font-weight: bold; color: var(--primary);">${c.question_count}</div>
+        <div class="camp-stats-label" style="font-size: 12px; color: var(--text-muted);">שאלות</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="camp-stats-num" style="font-size: 24px; font-weight: bold; color: var(--primary);">${c.participant_count}</div>
+        <div class="camp-stats-label" style="font-size: 12px; color: var(--text-muted);">משתתפים</div>
+      </div>
+    </div>
+
+    <div class="actions" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; justify-content: center;">
+      <button data-open="${c.id}" class="btn-primary" style="font-size: 12px; padding: 6px 12px;" ${pending ? "disabled" : ""}>עריכת סקר</button>
+      <button data-duplicate="${c.id}" style="background: white; border: 1px solid var(--border); color: #475569; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" ${pending ? "disabled" : ""}>שכפל</button>
+      <button data-start="${c.id}" style="background: white; border: 1px solid #16a34a; color: #16a34a; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" ${pending ? "disabled" : ""}>הפעל</button>
+      <button data-pause="${c.id}" style="background: white; border: 1px solid #d97706; color: #d97706; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" ${pending ? "disabled" : ""}>השהה</button>
+      <button data-resume="${c.id}" style="background: white; border: 1px solid #0284c7; color: #0284c7; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" ${pending ? "disabled" : ""}>המשך</button>
+      <button data-stop="${c.id}" style="background: #fee2e2; border: 1px solid #dc2626; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" ${pending ? "disabled" : ""}>עצור</button>
+      <button data-delete-campaign="${c.id}" style="background: white; border: 1px solid #dc2626; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" ${pending ? "disabled" : ""}>מחק</button>
+    </div>
+
+    <div class="progress-container" style="margin-top: auto;">
+      <div class="progress-labels" style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted);">
+        <span>התקדמות</span>
+      </div>
+      <div class="progress-bar-bg" style="height: 6px; background: var(--border); border-radius: 3px; width: 100%; margin: 8px 0; overflow: hidden;">
+        <div class="progress-bar-fill" style="height: 100%; background: var(--primary); width: ${c.participant_count > 0 ? 50 : 0}%;"></div>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
 async function loadCampaignCards() {
   const campaigns = await api("/api/campaigns/summary");
+  state.campaignSummaries = campaigns;
 
   // Rescue builder from grid before wiping innerHTML
   if (builderPanel.parentElement === campaignCards) {
@@ -219,56 +276,7 @@ async function loadCampaignCards() {
   }
 
   campaigns.forEach((c) => {
-    const card = document.createElement("article");
-    card.className = "card";
-    card.dataset.campaignId = c.id;
-    card.style.display = "flex";
-    card.style.flexDirection = "column";
-
-    let statusColor = "background:#f1f5f9; color:#475569;";
-    let statusText = "טיוטה";
-    if(c.status === "active") { statusColor = "background:#dcfce7; color:#166534;"; statusText="פעיל"; }
-    if(c.status === "paused") { statusColor = "background:#fef3c7; color:#b45309;"; statusText="מושהה"; }
-
-    card.innerHTML = `
-      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-weight:bold; font-size:16px;">${c.name}</span>
-        <div style="display: flex; gap: 8px;">
-          <span class="status-badge" style="${statusColor}; padding:4px 8px; border-radius:12px; font-size:11px;">${statusText}</span>
-        </div>
-      </div>
-      
-      <div class="grid-2 camp-stats" style="display:grid; grid-template-columns:1fr 1fr; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 16px 0; padding: 12px 0;">
-        <div style="text-align:center;">
-          <div class="camp-stats-num" style="font-size: 24px; font-weight: bold; color: var(--primary);">${c.question_count}</div>
-          <div class="camp-stats-label" style="font-size: 12px; color: var(--text-muted);">שאלות</div>
-        </div>
-        <div style="text-align:center;">
-          <div class="camp-stats-num" style="font-size: 24px; font-weight: bold; color: var(--primary);">${c.participant_count}</div>
-          <div class="camp-stats-label" style="font-size: 12px; color: var(--text-muted);">משתתפים</div>
-        </div>
-      </div>
-
-      <div class="actions" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; justify-content: center;">
-        <button data-open="${c.id}" class="btn-primary" style="font-size: 12px; padding: 6px 12px;">עריכת סקר</button>
-        <button data-duplicate="${c.id}" style="background: white; border: 1px solid var(--border); color: #475569; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">שכפל</button>
-        <button data-start="${c.id}" style="background: white; border: 1px solid #16a34a; color: #16a34a; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">הפעל</button>
-        <button data-pause="${c.id}" style="background: white; border: 1px solid #d97706; color: #d97706; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">השהה</button>
-        <button data-resume="${c.id}" style="background: white; border: 1px solid #0284c7; color: #0284c7; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">המשך</button>
-        <button data-stop="${c.id}" style="background: #fee2e2; border: 1px solid #dc2626; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">עצור</button>
-        <button data-delete-campaign="${c.id}" style="background: white; border: 1px solid #dc2626; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">מחק</button>
-      </div>
-
-      <div class="progress-container" style="margin-top: auto;">
-        <div class="progress-labels" style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted);">
-          <span>התקדמות</span>
-        </div>
-        <div class="progress-bar-bg" style="height: 6px; background: var(--border); border-radius: 3px; width: 100%; margin: 8px 0; overflow: hidden;">
-          <div class="progress-bar-fill" style="height: 100%; background: var(--primary); width: ${c.participant_count > 0 ? 50 : 0}%;"></div>
-        </div>
-      </div>
-    `;
-    campaignCards.appendChild(card);
+    campaignCards.appendChild(buildCampaignCard(c));
   });
 
   // Re-insert builder after the selected card if one is open
@@ -400,8 +408,26 @@ campaignCards.addEventListener("click", async (e) => {
       await openCampaign(Number(id), btn.closest("article"));
       showToast("Campaign opened");
     } else if (btn.dataset.duplicate) {
-      await api(`/api/campaigns/${id}/duplicate`, { method: "POST" });
-      showToast("Campaign duplicated");
+      const source = (state.campaignSummaries || []).find((c) => c.id === Number(id));
+      let tempCard = null;
+      if (source) {
+        const tempClone = {
+          id: `pending-${Date.now()}`,
+          name: `${source.name} (Copy)`,
+          status: "draft",
+          question_count: source.question_count,
+          participant_count: source.participant_count,
+        };
+        tempCard = buildCampaignCard(tempClone, { pending: true });
+        btn.closest("article").insertAdjacentElement("afterend", tempCard);
+        showToast("משכפל...");
+      }
+      try {
+        await api(`/api/campaigns/${id}/duplicate`, { method: "POST" });
+        showToast("Campaign duplicated");
+      } finally {
+        if (tempCard) tempCard.remove();
+      }
       await loadCampaignCards();
     } else if (btn.dataset.start) {
       await api(`/api/campaigns/${id}/start`, { method: "POST" });
@@ -643,3 +669,8 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
 loadCampaignCards().catch((err) => {
   showToast(err.message);
 });
+
+const CAMPAIGN_POLL_INTERVAL_MS = 8000;
+setInterval(() => {
+  loadCampaignCards().catch(() => {});
+}, CAMPAIGN_POLL_INTERVAL_MS);

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from collections import defaultdict
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -86,6 +86,31 @@ logger = logging.getLogger(__name__)
 
 _scheduler_task: asyncio.Task | None = None
 _telephony_watchdog: asyncio.Task | None = None
+_db_keepalive_task: asyncio.Task | None = None
+_last_activity_at: datetime = datetime.now(timezone.utc)
+
+# Neon (and similar serverless Postgres) suspends its compute after a few
+# minutes of inactivity; the first query afterward pays a multi-second cold
+# start. Pinging on a fixed timer would keep the compute alive 24/7 and burn
+# through Neon's free-tier compute-hour quota in days, so this loop only
+# pings while there has been *real* HTTP traffic recently — during genuine
+# idle stretches (nights, weekends) it stays silent and lets Neon suspend
+# normally to save quota.
+DB_KEEPALIVE_INTERVAL_SECONDS = 60
+DB_KEEPALIVE_ACTIVE_WINDOW_SECONDS = 600
+
+
+async def _db_keepalive_loop() -> None:
+    while True:
+        await asyncio.sleep(DB_KEEPALIVE_INTERVAL_SECONDS)
+        idle_seconds = (datetime.now(timezone.utc) - _last_activity_at).total_seconds()
+        if idle_seconds > DB_KEEPALIVE_ACTIVE_WINDOW_SECONDS:
+            continue
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+        except Exception:
+            logger.warning("DB keep-alive ping failed", exc_info=True)
 
 
 def _migrate_db() -> None:
@@ -162,13 +187,15 @@ def _migrate_db() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _scheduler_task, _telephony_watchdog
-    _migrate_db()
+    global _scheduler_task, _telephony_watchdog, _db_keepalive_task
     if not getattr(_app.state, "disable_scheduler", False):
+        _migrate_db()
         if _scheduler_task is None or _scheduler_task.done():
             _scheduler_task = asyncio.create_task(_scheduler_loop())
         if _telephony_watchdog is None or _telephony_watchdog.done():
             _telephony_watchdog = start_watchdog(get_telephony_store())
+        if _db_keepalive_task is None or _db_keepalive_task.done():
+            _db_keepalive_task = asyncio.create_task(_db_keepalive_loop())
     yield
     if _scheduler_task:
         _scheduler_task.cancel()
@@ -176,6 +203,9 @@ async def lifespan(_app: FastAPI):
     if _telephony_watchdog:
         _telephony_watchdog.cancel()
         _telephony_watchdog = None
+    if _db_keepalive_task:
+        _db_keepalive_task.cancel()
+        _db_keepalive_task = None
 
 
 app = FastAPI(title="VoiceSurvey AI Campaign Builder", version="0.1.0", lifespan=lifespan)
@@ -195,6 +225,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+
+@app.middleware("http")
+async def _track_activity(request: Request, call_next):
+    global _last_activity_at
+    _last_activity_at = datetime.now(timezone.utc)
+    return await call_next(request)
 
 
 SCHEDULER_TICK_SECONDS = 5
@@ -744,9 +781,9 @@ def duplicate_campaign(
     db.add(clone)
     db.flush()
 
-    id_map = {}
-    for question in sorted(campaign.questions, key=lambda q: q.order_index):
-        new_question = Question(
+    sorted_questions = sorted(campaign.questions, key=lambda q: q.order_index)
+    new_questions = [
+        Question(
             campaign_id=clone.id,
             order_index=question.order_index,
             key=f"{question.key}_copy_{clone.id}",
@@ -755,26 +792,32 @@ def duplicate_campaign(
             required=question.required,
             config=question.config,
         )
-        db.add(new_question)
-        db.flush()
-        id_map[question.id] = new_question.id
+        for question in sorted_questions
+    ]
+    db.add_all(new_questions)
+    db.flush()
+    id_map = {
+        old_question.id: new_question.id
+        for old_question, new_question in zip(sorted_questions, new_questions)
+    }
 
-    for rule in campaign.rules:
-        db.add(
-            BranchRule(
-                campaign_id=clone.id,
-                source_question_id=id_map.get(rule.source_question_id, rule.source_question_id),
-                operator=rule.operator,
-                value=rule.value,
-                action=rule.action,
-                target_question_id=(
-                    id_map.get(rule.target_question_id)
-                    if rule.target_question_id is not None
-                    else None
-                ),
-                priority=rule.priority,
-            )
+    new_rules = [
+        BranchRule(
+            campaign_id=clone.id,
+            source_question_id=id_map.get(rule.source_question_id, rule.source_question_id),
+            operator=rule.operator,
+            value=rule.value,
+            action=rule.action,
+            target_question_id=(
+                id_map.get(rule.target_question_id)
+                if rule.target_question_id is not None
+                else None
+            ),
+            priority=rule.priority,
         )
+        for rule in campaign.rules
+    ]
+    db.add_all(new_rules)
 
     db.commit()
     db.refresh(clone)
