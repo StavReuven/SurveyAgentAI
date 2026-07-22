@@ -1522,6 +1522,38 @@ async def process_voice_turn(
         call_log.turns_count = len(ctx.history)
         call_log.answers = dict(ctx.answers)
 
+        # Persist each answer as a real `Answer` row too — not just the JSON
+        # blob on CallLog. NER/sentiment/fact-check analysis and cross-survey
+        # matching (run_cross_survey.py) all read from the `answers` table,
+        # so without this they silently never see any data from real calls.
+        questions_by_key = {q.question_key: q for q in ctx.questions}
+        for key, value in ctx.answers.items():
+            q = questions_by_key.get(key)
+            if not q:
+                continue
+            existing_answer = (
+                db.query(Answer)
+                .filter(
+                    Answer.session_id == session_id,
+                    Answer.campaign_id == campaign_id,
+                    Answer.question_key == key,
+                )
+                .first()
+            )
+            if existing_answer:
+                existing_answer.raw_text = value
+                existing_answer.normalized_value = value
+            else:
+                db.add(Answer(
+                    session_id=session_id,
+                    campaign_id=campaign_id,
+                    question_id=q.question_id,
+                    question_key=key,
+                    raw_text=value,
+                    normalized_value=value,
+                    answer_type=q.question_type,
+                ))
+
         # Rapport = avg STT confidence from caller_input events
         confidences = [
             e["confidence"] for e in ctx.history
