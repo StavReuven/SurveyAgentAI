@@ -36,6 +36,31 @@ _STOPWORDS = {
 _WORD_RE = re.compile(r"[a-zA-Z֐-׿]+")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 
+# Spelled-out numbers, so "third year" or "בשנה השלישית" extract just as well
+# as a literal digit would. Covers cardinals and ordinals 1-12 in English and
+# Hebrew (masculine + feminine forms) — enough for the common cases (ages,
+# academic year, count of times) without trying to be a full NLP number parser.
+_NUMBER_WORDS = {
+    # English cardinals
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "eleven": "11", "twelve": "12",
+    # English ordinals
+    "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5",
+    "sixth": "6", "seventh": "7", "eighth": "8", "ninth": "9", "tenth": "10",
+    "eleventh": "11", "twelfth": "12",
+    # Hebrew cardinals (m/f forms)
+    "אחד": "1", "אחת": "1", "שניים": "2", "שתיים": "2", "שלושה": "3",
+    "שלוש": "3", "ארבעה": "4", "ארבע": "4", "חמישה": "5", "חמש": "5",
+    "שישה": "6", "שש": "6", "שבעה": "7", "שבע": "7", "שמונה": "8",
+    "תשעה": "9", "תשע": "9", "עשרה": "10", "עשר": "10",
+    # Hebrew ordinals (m/f forms)
+    "ראשון": "1", "ראשונה": "1", "שני": "2", "שנייה": "2", "שלישי": "3",
+    "שלישית": "3", "רביעי": "4", "רביעית": "4", "חמישי": "5", "חמישית": "5",
+    "שישי": "6", "שישית": "6", "שביעי": "7", "שביעית": "7", "שמיני": "8",
+    "שמינית": "8", "תשיעי": "9", "תשיעית": "9", "עשירי": "10", "עשירית": "10",
+}
+
 # Minimum number of shared, meaningful words between an answer's context and
 # a question's own wording before we trust it's actually the same topic —
 # without this, a lone shared word like "hours" would match almost anything.
@@ -45,23 +70,30 @@ _MIN_OVERLAP = 2
 def _content_words(text: str) -> set[str]:
     return {
         w for w in _WORD_RE.findall((text or "").lower())
-        if w not in _STOPWORDS and len(w) > 1
+        if w not in _STOPWORDS and w not in _NUMBER_WORDS and len(w) > 1
     }
 
 
 def extract_facts(text: str, window: int = 4) -> list[tuple[str, set[str]]]:
-    """Find every number in the text, paired with the meaningful words
-    around it (its "topic context"). Returns [(number_str, context_words)]."""
+    """Find every number in the text — as a digit or a spelled-out word
+    ("third", "שלישית") — paired with the meaningful words around it (its
+    "topic context"). Returns [(number_str, context_words)]."""
     words = (text or "").split()
     results = []
     for i, tok in enumerate(words):
         m = _NUMBER_RE.search(tok)
-        if not m:
-            continue
+        if m:
+            value = m.group(0)
+        else:
+            cleaned = _WORD_RE.findall(tok.lower())
+            word_key = cleaned[0] if cleaned else None
+            if not word_key or word_key not in _NUMBER_WORDS:
+                continue
+            value = _NUMBER_WORDS[word_key]
         start, end = max(0, i - window), min(len(words), i + window + 1)
         context = _content_words(" ".join(words[start:end]))
         if context:
-            results.append((m.group(0), context))
+            results.append((value, context))
     return results
 
 
