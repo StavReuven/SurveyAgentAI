@@ -1,6 +1,12 @@
-"""Regex/keyword-based cross-survey fact matching — the functional half of
-cross-survey matching that works without an ANTHROPIC_API_KEY (unlike the
-LLM-based app/intelligence/cross_survey.py, which is a no-op without one).
+"""Generic, rule-based cross-survey fact matching — no LLM required (unlike
+app/intelligence/cross_survey.py, which is a no-op without ANTHROPIC_API_KEY).
+
+Instead of a fixed list of known topics (sleep hours, age, etc.), this finds
+ANY number in a free-text answer, looks at the words around it, and checks
+whether those words overlap with a target question's own wording (once
+filler words like "how many"/"כמה" are stripped out). This means a brand
+new question created in the UI works automatically — there's no per-topic
+regex to add by hand.
 
 Shared by run_cross_survey.py (manual full-DB backfill) and process_voice_turn
 in app/main.py (automatic, per-answer, right after a call ends).
@@ -13,135 +19,62 @@ from sqlalchemy.orm import Session
 
 from ..models import Answer, Campaign, CrossSurveyMatch, Question
 
-# Each entry: (topic_key, extraction_regex, question_keywords)
-#
-# extraction_regex must have group(1) = the numeric value.
-# question_keywords: if ANY of these appear in the question prompt → it's a match.
-FACTUAL_PATTERNS = [
-    # Study hours
-    (
-        "study_hours",
-        re.compile(
-            r'(\d+(?:\.\d+)?)\s*'
-            r'(?:שעות?\s*(?:לימוד|לימודים|ללמוד|לפני\s*המבחן)|'
-            r'hours?\s*(?:of\s*)?(?:study|studying|learning|before\s*exam))',
-            re.I
-        ),
-        ["כמה שעות למדת", "כמה שעות לימוד", "how many hours.*stud",
-         "hours of study", "hours did you study"],
-    ),
-    # Sleep hours
-    (
-        "sleep_hours",
-        re.compile(
-            r'(\d+(?:\.\d+)?)\s*'
-            r'(?:שעות?\s*(?:שינה|ישנתי|לישון)|'
-            r'hours?\s*(?:of\s*)?(?:sleep|sleeping|slept))',
-            re.I
-        ),
-        ["כמה שעות ישנת", "כמה שעות שינה", "how many hours.*sleep",
-         "hours did you sleep", "hours of sleep"],
-    ),
-    # Exercise / sport frequency (times per week)
-    (
-        "exercise_frequency",
-        re.compile(
-            r'(\d+)\s*'
-            r'(?:פעמים?\s*(?:בשבוע|לשבוע)|'
-            r'times?\s*(?:a|per)\s*week)\s*'
-            r'(?:ספורט|אימון|exercise|workout|gym)?',
-            re.I
-        ),
-        ["כמה פעמים בשבוע", "how many times.*week", "exercise.*week",
-         "workout.*week", "ספורט בשבוע", "אימון בשבוע"],
-    ),
-    # Age
-    (
-        "age",
-        re.compile(
-            r'(?:בן|בת|גילי|גיל)\s*(\d{1,3})|'
-            r'(?:i am|i\'m|age)\s+(\d{1,3})\s*(?:years?)?',
-            re.I
-        ),
-        ["כמה שנים", "מה גילך", "בן כמה", "how old", "what.*age", "your age"],
-    ),
-    # Money / spending
-    (
-        "money_spent",
-        re.compile(
-            r'(\d+(?:[,\.]\d+)?)\s*'
-            r'(?:שקל|ש"ח|nis|ils|dollar|\$|euro|€)',
-            re.I
-        ),
-        ["כמה שילמת", "כמה עלה", "how much.*cost", "how much.*pay",
-         "how much.*spend", "price", "מחיר", "עלות"],
-    ),
-    # Commute / travel time (minutes)
-    (
-        "commute_minutes",
-        re.compile(
-            r'(\d+)\s*'
-            r'(?:דקות?\s*(?:נסיעה|הליכה|דרך)|'
-            r'minutes?\s*(?:commute|travel|drive|walk|ride))',
-            re.I
-        ),
-        ["כמה זמן נסיעה", "כמה דקות", "how long.*commute", "travel time",
-         "how many minutes"],
-    ),
-    # Number of meals per day
-    (
-        "meals_per_day",
-        re.compile(
-            r'(\d)\s*(?:ארוחות?\s*(?:ביום|לדין)|meals?\s*(?:a|per)\s*day)',
-            re.I
-        ),
-        ["כמה ארוחות", "how many meals", "meals per day", "ארוחות ביום"],
-    ),
-    # Screen / phone time (hours per day)
-    (
-        "screen_hours",
-        re.compile(
-            r'(\d+(?:\.\d+)?)\s*'
-            r'(?:שעות?\s*(?:מסך|טלפון|פלאפון|מחשב)|'
-            r'hours?\s*(?:of\s*)?(?:screen|phone|computer|device))',
-            re.I
-        ),
-        ["כמה שעות מסך", "כמה שעות טלפון", "screen time", "phone time",
-         "hours.*screen", "hours.*phone"],
-    ),
-    # Water / liquids per day (glasses / liters)
-    (
-        "water_intake",
-        re.compile(
-            r'(\d+(?:\.\d+)?)\s*'
-            r'(?:כוסות?\s*מים|ליטר\s*מים|glasses?\s*of\s*water|liters?\s*of\s*water)',
-            re.I
-        ),
-        ["כמה כוסות מים", "כמה מים", "how many glasses", "water intake",
-         "liters of water"],
-    ),
-]
+# Words that carry no topical meaning on their own — stripped from both the
+# answer's context window and the target question's prompt before comparing,
+# so that e.g. "how many hours did you sleep" and "hours of sleep" reduce to
+# the same core terms ({hours, sleep}) instead of matching on "how"/"did"/"of".
+_STOPWORDS = {
+    "how", "many", "much", "what", "when", "is", "are", "was", "were", "did",
+    "do", "does", "you", "your", "the", "a", "an", "of", "in", "on", "at",
+    "to", "for", "and", "or", "i", "it", "this", "that", "last", "night",
+    "yesterday", "today", "per", "a", "week", "day", "please", "tell", "me",
+    "about",
+    "כמה", "מה", "האם", "שלך", "שלכם", "אתמול", "היום", "אמש", "בשבוע",
+    "ביום", "אני", "את", "אתה", "זה", "הוא", "היא", "על", "עם", "של",
+}
+
+_WORD_RE = re.compile(r"[a-zA-Z֐-׿]+")
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+# Minimum number of shared, meaningful words between an answer's context and
+# a question's own wording before we trust it's actually the same topic —
+# without this, a lone shared word like "hours" would match almost anything.
+_MIN_OVERLAP = 2
 
 
-def extract_facts(text: str) -> list[tuple[str, str]]:
-    """Return list of (topic_key, value_str) from free text."""
+def _content_words(text: str) -> set[str]:
+    return {
+        w for w in _WORD_RE.findall((text or "").lower())
+        if w not in _STOPWORDS and len(w) > 1
+    }
+
+
+def extract_facts(text: str, window: int = 4) -> list[tuple[str, set[str]]]:
+    """Find every number in the text, paired with the meaningful words
+    around it (its "topic context"). Returns [(number_str, context_words)]."""
+    words = (text or "").split()
     results = []
-    for topic_key, pattern, _ in FACTUAL_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            val = next((g for g in m.groups() if g is not None), None)
-            if val:
-                results.append((topic_key, val.replace(',', '')))
+    for i, tok in enumerate(words):
+        m = _NUMBER_RE.search(tok)
+        if not m:
+            continue
+        start, end = max(0, i - window), min(len(words), i + window + 1)
+        context = _content_words(" ".join(words[start:end]))
+        if context:
+            results.append((m.group(0), context))
     return results
 
 
-def question_matches_topic(question: Question, topic_key: str) -> bool:
-    """True if the question is asking about the given factual topic."""
-    prompt = (question.prompt or '').lower()
-    _, _, keywords = next(
-        (p for p in FACTUAL_PATTERNS if p[0] == topic_key), (None, None, [])
-    )
-    return any(re.search(kw, prompt, re.I) for kw in (keywords or []))
+def question_matches_context(question: Question, context_words: set[str]) -> set[str]:
+    """Return the overlapping words if this question is plausibly asking
+    about the same thing as `context_words`, else an empty set."""
+    q_terms = _content_words(question.prompt or "")
+    if not q_terms:
+        return set()
+    overlap = context_words & q_terms
+    if len(overlap) >= min(_MIN_OVERLAP, len(q_terms)):
+        return overlap
+    return set()
 
 
 def match_answer(db: Session, answer: Answer) -> int:
@@ -154,7 +87,7 @@ def match_answer(db: Session, answer: Answer) -> int:
 
     Returns the number of new CrossSurveyMatch rows created.
     """
-    text = answer.raw_text or ''
+    text = answer.raw_text or ""
     if len(text) < 10:
         return 0
 
@@ -185,11 +118,12 @@ def match_answer(db: Session, answer: Answer) -> int:
 
     inserted = 0
     for q in other_questions:
-        if q.question_type not in ('rating', 'free_text'):
+        if q.question_type not in ("rating", "free_text"):
             continue
 
-        for topic_key, extracted_value in facts:
-            if not question_matches_topic(q, topic_key):
+        for extracted_value, context_words in facts:
+            overlap = question_matches_context(q, context_words)
+            if not overlap:
                 continue
 
             exists = db.query(CrossSurveyMatch).filter(
@@ -209,8 +143,8 @@ def match_answer(db: Session, answer: Answer) -> int:
                 target_campaign_id=q.campaign_id,
                 target_question_key=q.key,
                 target_question_prompt=(q.prompt[:512] if q.prompt else None),
-                matched_topics=topic_key,
-                match_confidence=0.85,
+                matched_topics="+".join(sorted(overlap))[:255],
+                match_confidence=0.7 + 0.1 * min(len(overlap) - _MIN_OVERLAP, 2),
             ))
 
             already = db.query(Answer).filter(
