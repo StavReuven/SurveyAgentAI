@@ -67,9 +67,36 @@ _NUMBER_WORDS = {
 _MIN_OVERLAP = 2
 
 
+def _stem(word: str) -> str:
+    """Minimal suffix-stripping so simple word-form variations count as the
+    same topic word: "brushed"/"brush", "times"/"time", "studies"/"study".
+    Not a real linguistic stemmer (Hebrew morphology especially isn't
+    handled) — just enough to catch common English plural/tense endings
+    without over-matching short/unrelated words."""
+    if len(word) <= 4:
+        return word
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith("ing"):
+        return word[:-3]
+    if word.endswith("ed"):
+        return word[:-2]
+    if word.endswith("es"):
+        # Only a real "-es" suffix after a sibilant sound (box+es, watch+es,
+        # wish+es) — otherwise the "e" belongs to the root itself and it's
+        # just a plain "-s" plural ("time+s" = "times", not "tim"+"es").
+        before = word[:-2]
+        if before.endswith(("s", "x", "z", "sh", "ch")):
+            return before
+        return word[:-1]
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
 def _content_words(text: str) -> set[str]:
     return {
-        w for w in _WORD_RE.findall((text or "").lower())
+        _stem(w) for w in _WORD_RE.findall((text or "").lower())
         if w not in _STOPWORDS and w not in _NUMBER_WORDS and len(w) > 1
     }
 

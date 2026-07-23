@@ -3,6 +3,7 @@ import csv
 import io
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -18,7 +19,7 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .database import Base, SessionLocal, engine, get_db
+from .database import Base, SessionLocal, direct_engine, engine, get_db
 from .models import (
     Answer,
     AnswerFactCheck,
@@ -82,7 +83,7 @@ from .schemas import (
 
 Base.metadata.create_all(bind=engine)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger(__name__)
 
 _scheduler_task: asyncio.Task | None = None
@@ -125,7 +126,7 @@ def _migrate_db() -> None:
         ("settings_audit_entries", "organization_id", "INTEGER"),
         ("call_attempts", "session_id", "VARCHAR(64)"),
     ]
-    with engine.connect() as conn:
+    with direct_engine.connect() as conn:
         for table, col, col_type in new_cols:
             try:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
@@ -445,31 +446,48 @@ async def _process_scheduler_tick(db: Session, execution: CampaignExecution):
     execution.last_tick_at = now_utc
 
 
+def _run_scheduler_tick_sync() -> None:
+    """The actual scheduler work — every DB query here (and the Twilio SDK
+    call inside _dial_participant) is blocking/synchronous despite living
+    inside `async def` functions. Against a remote DB, one pass over even a
+    modest number of running campaigns took 11+ seconds measured directly —
+    and since this used to run straight on the main event loop, it froze
+    *every* other request the server was handling (including Twilio's own
+    webhooks) for that whole duration, every single tick. Runs in its own
+    thread with its own event loop (see run_in_executor at the call site) so
+    it can never block real request handling, no matter how slow the DB or
+    how many campaigns are running."""
+    db = SessionLocal()
+    try:
+        running = (
+            db.query(CampaignExecution)
+            .filter(CampaignExecution.state == "running")
+            .all()
+        )
+        for execution in running:
+            try:
+                asyncio.run(_process_scheduler_tick(db, execution))
+                db.commit()
+            except Exception:
+                # One campaign's tick failing must not block every other
+                # running campaign's tick in the same pass.
+                logger.exception(
+                    "Scheduler tick failed for campaign %s", execution.campaign_id
+                )
+                db.rollback()
+    except Exception:
+        logger.exception("Scheduler loop failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
 async def _scheduler_loop():
     while True:
-        db = SessionLocal()
         try:
-            running = (
-                db.query(CampaignExecution)
-                .filter(CampaignExecution.state == "running")
-                .all()
-            )
-            for execution in running:
-                try:
-                    await _process_scheduler_tick(db, execution)
-                    db.commit()
-                except Exception:
-                    # One campaign's tick failing must not block every other
-                    # running campaign's tick in the same pass.
-                    logger.exception(
-                        "Scheduler tick failed for campaign %s", execution.campaign_id
-                    )
-                    db.rollback()
+            await asyncio.get_running_loop().run_in_executor(None, _run_scheduler_tick_sync)
         except Exception:
-            logger.exception("Scheduler loop failed")
-            db.rollback()
-        finally:
-            db.close()
+            logger.exception("Scheduler loop dispatch failed")
 
         await asyncio.sleep(SCHEDULER_TICK_SECONDS)
 
@@ -1417,6 +1435,115 @@ async def start_voice_session(
     }
 
 
+@dataclass
+class _CallTurnSnapshot:
+    """The heavy, non-time-sensitive parts of a finished call, copied out of
+    `ctx` so the background task doesn't depend on in-memory session state
+    that could change (or be torn down) before it actually runs.
+
+    Deliberately excludes call_log.status — that's written synchronously in
+    process_voice_turn before responding, because Twilio's own status
+    webhook (app/telephony/router.py) can arrive almost immediately after
+    the call ends and reads that field to decide the CallAttempt outcome
+    (e.g. distinguishing "not_now" from a normal "completed"). Deferring it
+    to the background would race against that webhook and could silently
+    reintroduce the exact not_now-vs-completed bug fixed earlier.
+    """
+    session_id: str
+    campaign_id: int
+    answers: dict[str, str]
+    history: list[dict]
+    questions_by_key: dict[str, QuestionContext]
+    voice_metrics: dict
+
+
+def _persist_call_turn(snap: _CallTurnSnapshot) -> None:
+    """Write the heavy per-call data in the background, on its own DB
+    session — the HTTP response to Twilio/the caller already went out before
+    this runs, so nothing here can add latency to the live conversation.
+
+    Deliberately a plain (non-async) function: every call in here is a
+    blocking, synchronous SQLAlchemy call. Scheduling it with
+    asyncio.create_task() would NOT actually run it in the background —
+    since it never awaits anything, it would monopolize the single-threaded
+    event loop until it finished, blocking even our own HTTP response from
+    being sent. It must run in a real OS thread (see run_in_executor at the
+    call site) to actually not block the request that triggered it.
+    """
+    db = SessionLocal()
+    try:
+        call_log = db.query(CallLog).filter(CallLog.session_id == snap.session_id).first()
+        if not call_log:
+            return
+
+        call_log.turns_count = len(snap.history)
+        call_log.answers = dict(snap.answers)
+
+        # Persist each answer as a real `Answer` row too — not just the
+        # JSON blob on CallLog. NER/sentiment/fact-check analysis and
+        # cross-survey matching all read from the `answers` table, so
+        # without this they silently never see data from real calls.
+        saved_answers: list[Answer] = []
+        for key, value in snap.answers.items():
+            q = snap.questions_by_key.get(key)
+            if not q:
+                continue
+            existing_answer = (
+                db.query(Answer)
+                .filter(
+                    Answer.session_id == snap.session_id,
+                    Answer.campaign_id == snap.campaign_id,
+                    Answer.question_key == key,
+                )
+                .first()
+            )
+            if existing_answer:
+                existing_answer.raw_text = value
+                existing_answer.normalized_value = value
+                saved_answers.append(existing_answer)
+            else:
+                new_answer = Answer(
+                    session_id=snap.session_id,
+                    campaign_id=snap.campaign_id,
+                    question_id=q.question_id,
+                    question_key=key,
+                    raw_text=value,
+                    normalized_value=value,
+                    answer_type=q.question_type,
+                )
+                db.add(new_answer)
+                saved_answers.append(new_answer)
+
+        # Rapport = avg STT confidence from caller_input events
+        confidences = [
+            e["confidence"] for e in snap.history
+            if e.get("event") == "caller_input" and isinstance(e.get("confidence"), float) and e["confidence"] > 0
+        ]
+        call_log.rapport_score = round(sum(confidences) / len(confidences), 2) if confidences else None
+
+        # Voice analytics: persist the calibration state (speaking rate, pitch,
+        # hesitation, energy) so it survives server restarts.
+        call_log.voice_metrics = snap.voice_metrics
+
+        # Full conversation history for audit / dashboard replay
+        call_log.history = list(snap.history)
+
+        # Automatic cross-survey matching — previously this only ever ran
+        # via a manual `python run_cross_survey.py` scan of the whole DB;
+        # now it runs right when a call finishes, scoped to just this
+        # call's own answers instead of rescanning everything.
+        db.flush()  # assign IDs to any newly-created Answer rows above
+        for saved_answer in saved_answers:
+            if saved_answer.answer_type == "free_text":
+                match_answer(db, saved_answer)
+        db.commit()
+    except Exception:
+        logger.exception("Background call-turn persistence failed for session %s", snap.session_id)
+        db.rollback()
+    finally:
+        db.close()
+
+
 @app.post("/api/campaigns/{campaign_id}/voice/sessions/{session_id}/turn")
 async def process_voice_turn(
     campaign_id: int,
@@ -1517,110 +1644,71 @@ async def process_voice_turn(
         session["completed_at"] = datetime.now(timezone.utc).isoformat()
         session["answers"] = dict(ctx.answers)
 
-    # SAA-101: update CallLog with status, answers, rapport, voice metrics, history
-    call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
-    if call_log:
-        call_log.turns_count = len(ctx.history)
-        call_log.answers = dict(ctx.answers)
+    # SAA-101: update CallLog status synchronously (fast — one row, one
+    # field), then defer the heavy stuff (answers, history, cross-survey
+    # matching) to a background task. The status HAS to be written before we
+    # respond: Twilio's own status webhook can arrive almost immediately
+    # after the call ends and reads this field to decide the CallAttempt
+    # outcome (e.g. "not_now" vs "completed") — deferring it risks the
+    # webhook reading a stale value and silently reintroducing that bug.
+    action = result.dialogue_action.value
+    call_was_escalated = any(e.get("event") == "escalate" for e in ctx.history)
 
-        # Persist each answer as a real `Answer` row too — not just the JSON
-        # blob on CallLog. NER/sentiment/fact-check analysis and cross-survey
-        # matching (run_cross_survey.py) all read from the `answers` table,
-        # so without this they silently never see any data from real calls.
-        questions_by_key = {q.question_key: q for q in ctx.questions}
-        saved_answers: list[Answer] = []
-        for key, value in ctx.answers.items():
-            q = questions_by_key.get(key)
-            if not q:
-                continue
-            existing_answer = (
-                db.query(Answer)
-                .filter(
-                    Answer.session_id == session_id,
-                    Answer.campaign_id == campaign_id,
-                    Answer.question_key == key,
+    final_status: str | None = None
+    if result.session_complete:
+        if not call_was_escalated and "escalat" not in action:
+            if "closing" in action or "end" in action:
+                # ctx.state is always DialogueState.DONE at this point regardless
+                # of why the call closed — the actual reason (e.g. the caller
+                # asked to be called back later) is only visible in the intent
+                # logged on the last "turn" history entry, not in ctx.state.
+                last_intent = next(
+                    (e.get("intent") for e in reversed(ctx.history) if e.get("event") == "turn"),
+                    None,
                 )
-                .first()
-            )
-            if existing_answer:
-                existing_answer.raw_text = value
-                existing_answer.normalized_value = value
-                saved_answers.append(existing_answer)
+                final_status = "not_now" if last_intent == IntentType.NOT_NOW else "completed"
             else:
-                new_answer = Answer(
-                    session_id=session_id,
-                    campaign_id=campaign_id,
-                    question_id=q.question_id,
-                    question_key=key,
-                    raw_text=value,
-                    normalized_value=value,
-                    answer_type=q.question_type,
-                )
-                db.add(new_answer)
-                saved_answers.append(new_answer)
+                final_status = "completed"
+        elif call_was_escalated:
+            final_status = "escalated"
+    elif "escalat" in action:
+        # Mid-call escalation — session stays open for operator takeover, but
+        # the dashboard's "escalated" count needs to reflect it right away.
+        final_status = "escalated"
 
-        # Rapport = avg STT confidence from caller_input events
-        confidences = [
-            e["confidence"] for e in ctx.history
-            if e.get("event") == "caller_input" and isinstance(e.get("confidence"), float) and e["confidence"] > 0
-        ]
-        call_log.rapport_score = round(sum(confidences) / len(confidences), 2) if confidences else None
+    if final_status:
+        call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+        if call_log:
+            call_log.status = final_status
+            if result.session_complete:
+                call_log.ended_at = datetime.now(timezone.utc)
+            db.commit()
 
-        # Voice analytics: persist the calibration state (speaking rate, pitch,
-        # hesitation, energy) so it survives server restarts.
+    if result.session_complete:
+        # Remove from operator queue if the agent closed the call naturally
+        # (escalated sessions stay until the operator explicitly handles them)
+        if not call_was_escalated:
+            get_escalation_queue().remove(session_id)
+
         cal = ctx.mirroring_calibration
-        call_log.voice_metrics = {
-            "turns_observed":  cal.turns_observed,
-            "is_calibrated":   cal.is_calibrated,
-            "calibration_turns": cal.calibration_turns,
-            "smoothed":  cal.smoothed.to_dict() if cal.smoothed else None,
-            "baseline":  cal.baseline.to_dict() if cal.baseline else None,
-        }
-
-        # Full conversation history for audit / dashboard replay
-        call_log.history = list(ctx.history)
-
-        action = result.dialogue_action.value
-        # Mark escalated in DB immediately — session stays open for operator takeover
-        if "escalat" in action:
-            call_log.status = "escalated"
-
-        # True if this call ever triggered escalation (checked via in-memory history)
-        call_was_escalated = any(e.get("event") == "escalate" for e in ctx.history)
-
-        if result.session_complete:
-            call_log.ended_at = datetime.now(timezone.utc)
-            # Once a call required intervention, keep "escalated" as the final status
-            # so the dashboard cumulative count never drops.
-            if not call_was_escalated and "escalat" not in action:
-                if "closing" in action or "end" in action:
-                    # ctx.state is always DialogueState.DONE at this point regardless
-                    # of why the call closed — the actual reason (e.g. the caller
-                    # asked to be called back later) is only visible in the intent
-                    # logged on the last "turn" history entry, not in ctx.state.
-                    last_intent = next(
-                        (e.get("intent") for e in reversed(ctx.history) if e.get("event") == "turn"),
-                        None,
-                    )
-                    call_log.status = "not_now" if last_intent == IntentType.NOT_NOW else "completed"
-                else:
-                    call_log.status = "completed"
-            elif call_was_escalated:
-                call_log.status = "escalated"
-            # Remove from operator queue if the agent closed the call naturally
-            # (escalated sessions stay until the operator explicitly handles them)
-            if not call_was_escalated:
-                get_escalation_queue().remove(session_id)
-
-            # Automatic cross-survey matching — previously this only ever ran
-            # via a manual `python run_cross_survey.py` scan of the whole DB;
-            # now it runs right when a call finishes, scoped to just this
-            # call's own answers instead of rescanning everything.
-            db.flush()  # assign IDs to any newly-created Answer rows above
-            for saved_answer in saved_answers:
-                if saved_answer.answer_type == "free_text":
-                    match_answer(db, saved_answer)
-        db.commit()
+        snapshot = _CallTurnSnapshot(
+            session_id=session_id,
+            campaign_id=campaign_id,
+            answers=dict(ctx.answers),
+            history=list(ctx.history),
+            questions_by_key={q.question_key: q for q in ctx.questions},
+            voice_metrics={
+                "turns_observed":  cal.turns_observed,
+                "is_calibrated":   cal.is_calibrated,
+                "calibration_turns": cal.calibration_turns,
+                "smoothed":  cal.smoothed.to_dict() if cal.smoothed else None,
+                "baseline":  cal.baseline.to_dict() if cal.baseline else None,
+            },
+        )
+        # run_in_executor (not create_task!) — this dispatches to a real OS
+        # thread so the blocking DB work inside truly can't stall the event
+        # loop / our own response. See _persist_call_turn's docstring.
+        asyncio.get_running_loop().run_in_executor(None, _persist_call_turn, snapshot)
 
     # SAA-78/82: include mirroring decision + monitoring flags in turn response
     mirroring_resp = None
