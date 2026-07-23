@@ -20,13 +20,18 @@ def get_current_user(
     if not sa_session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    session_row = db.query(SessionModel).filter(SessionModel.token == sa_session).first()
-    if session_row is None or session_row.expires_at < datetime.utcnow():
+    row = (
+        db.query(SessionModel, User)
+        .join(User, User.id == SessionModel.user_id)
+        .filter(SessionModel.token == sa_session, User.is_active.is_(True))
+        .first()
+    )
+    if row is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
 
-    user = db.query(User).filter(User.id == session_row.user_id, User.is_active.is_(True)).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    session_row, user = row
+    if session_row.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     return user
 
 

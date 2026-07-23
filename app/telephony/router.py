@@ -294,6 +294,7 @@ async def webhook_gather(
         vr.append(gather)
         vr.append(_build_say(no_response_text, twiml_lang))
 
+    logger.info("DEBUG gather response ready session=%s", session_id)
     return Response(content=str(vr), media_type="application/xml")
 
 

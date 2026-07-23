@@ -21,6 +21,17 @@ if not local_url or not cloud_url:
     print("Missing DATABASE_URL or CLOUD_DATABASE_URL in .env")
     sys.exit(1)
 
+print("Resetting target schema (in case of a leftover partial attempt)...")
+reset = subprocess.run(
+    [f"{PG_BIN}\\psql.exe", cloud_url, "-v", "ON_ERROR_STOP=1",
+     "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"],
+    capture_output=True,
+)
+if reset.returncode != 0:
+    print("SCHEMA RESET FAILED:")
+    print(reset.stderr.decode(errors="replace"))
+    sys.exit(1)
+
 print("Dumping local database...")
 dump = subprocess.run(
     [f"{PG_BIN}\\pg_dump.exe", local_url, "--format=plain", "--no-owner", "--no-privileges", "--no-comments"],
