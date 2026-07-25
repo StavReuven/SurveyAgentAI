@@ -4,3 +4,7 @@ app/settings/.encryption_key
 .env
 .env.bak
 .env.*.bak
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
