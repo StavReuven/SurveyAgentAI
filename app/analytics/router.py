@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..auth.deps import get_current_user
 from ..database import get_db
+from ..intelligence.interviewee import CITY_TO_DISTRICT, DISTRICTS
 from ..models import Answer, AnswerFactCheck, AnswerLabel, CallLog, Campaign, ConversationTurn, CrossSurveyMatch, DemographicWeight, EntityMention, FreeTextAnalysis, FreeTextLabel, Interviewee, Question, User
 
 router = APIRouter(prefix="/api/campaigns/{campaign_id}/analytics", tags=["analytics"])
@@ -25,6 +26,84 @@ def _get_campaign_or_404(campaign_id: int, db: Session, organization_id: int | N
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return campaign
+
+
+def get_owned_campaign(
+    campaign_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Campaign:
+    return _get_campaign_or_404(campaign_id, db, user.organization_id)
+
+
+# ── Demographic bias (age + city/district) ─────────────────────────────────
+# Two bias dimensions, sharing the same bucket→target→actual→weight machinery.
+# demographic_key distinguishes them in the DemographicWeight table. The
+# city→district lookup lives in app/intelligence/interviewee.py (that's
+# where Interviewee.demographics['city'] gets populated from a raw answer,
+# so the extraction and the bucketing share one canonical list instead of
+# two that could drift apart).
+_AGE_BUCKETS = ["18-25", "26-35", "36-50", "51-65", "65+"]
+
+
+def _age_bucket(age_str: str) -> str | None:
+    try:
+        age = int(age_str)
+    except (TypeError, ValueError):
+        return None
+    if age < 18:
+        return None
+    if age <= 25:
+        return "18-25"
+    if age <= 35:
+        return "26-35"
+    if age <= 50:
+        return "36-50"
+    if age <= 65:
+        return "51-65"
+    return "65+"
+
+
+def _city_bucket(city_str: str) -> str | None:
+    return CITY_TO_DISTRICT.get((city_str or "").strip().lower())
+
+
+# Each scheme: (bucket list, function mapping a raw Interviewee.demographics
+# value to one of those buckets or None if unclassifiable).
+_DEMOGRAPHIC_SCHEMES: dict[str, tuple[list[str], object]] = {
+    "age": (_AGE_BUCKETS, _age_bucket),
+    "city": (DISTRICTS, _city_bucket),
+}
+
+
+def _compute_actual_distribution(campaign_id: int, demographic_key: str, db: Session) -> dict[str, int]:
+    """Bucket counts of distinct interviewees who answered this campaign,
+    read from Interviewee.demographics[demographic_key] (populated
+    automatically per-call — see app/intelligence/interviewee.py)."""
+    buckets, bucket_fn = _DEMOGRAPHIC_SCHEMES[demographic_key]
+    counts: dict[str, int] = {b: 0 for b in buckets}
+
+    interviewee_ids = (
+        db.query(Answer.interviewee_id)
+        .filter(Answer.campaign_id == campaign_id, Answer.interviewee_id.isnot(None))
+        .distinct()
+        .all()
+    )
+    if not interviewee_ids:
+        return counts
+    interviewees = (
+        db.query(Interviewee)
+        .filter(Interviewee.id.in_([i[0] for i in interviewee_ids]))
+        .all()
+    )
+    for person in interviewees:
+        raw_value = (person.demographics or {}).get(demographic_key)
+        if not raw_value:
+            continue
+        bucket = bucket_fn(raw_value)
+        if bucket:
+            counts[bucket] += 1
+    return counts
 
 
 def _scoped_campaign_ids(db: Session, organization_id: int | None, campaign_id: int | None) -> set[int]:
@@ -368,25 +447,152 @@ def answer_quality_by_question(
 @global_router.get("/demographic-bias")
 def demographic_bias(
     campaign_id: int | None = Query(default=None),
+    demographic_key: str = Query(default="age"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Demographic weight rows: actual vs target percentages for bias detection."""
-    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
-    q = db.query(DemographicWeight).filter(DemographicWeight.campaign_id.in_(scoped_ids))
+    """Demographic weight rows: actual vs target percentages for bias detection.
+    demographic_key is "age" or "city" (city buckets by district).
 
-    rows = q.order_by(DemographicWeight.demographic_key, DemographicWeight.demographic_value).all()
+    If a manager hasn't set target percentages for a campaign yet, there's
+    nothing in DemographicWeight to read — rather than showing an empty
+    chart, fall back to the real actual distribution we already have (from
+    Interviewee.demographics), just without a target/weight to compare it against.
+    """
+    if demographic_key not in _DEMOGRAPHIC_SCHEMES:
+        raise HTTPException(status_code=400, detail=f"Unknown demographic_key: {demographic_key}")
+    buckets, _ = _DEMOGRAPHIC_SCHEMES[demographic_key]
+
+    scoped_ids = _scoped_campaign_ids(db, user.organization_id, campaign_id)
+    q = db.query(DemographicWeight).filter(
+        DemographicWeight.campaign_id.in_(scoped_ids),
+        DemographicWeight.demographic_key == demographic_key,
+    )
+
+    rows = q.order_by(DemographicWeight.demographic_value).all()
+    if rows:
+        return {
+            "weights": [
+                {
+                    "campaign_id": w.campaign_id,
+                    "demographic_key": w.demographic_key,
+                    "demographic_value": w.demographic_value,
+                    "target_percent": w.target_percent,
+                    "actual_percent": w.actual_percent,
+                    "weight": w.weight,
+                }
+                for w in rows
+            ]
+        }
+
+    # Fallback: no targets set anywhere in scope — show the actual
+    # distribution only, combined across every scoped campaign.
+    combined_counts: dict[str, int] = {b: 0 for b in buckets}
+    for cid in scoped_ids:
+        counts = _compute_actual_distribution(cid, demographic_key, db)
+        for bucket, n in counts.items():
+            combined_counts[bucket] += n
+
+    total = sum(combined_counts.values())
+    if not total:
+        return {"weights": []}
+
     return {
         "weights": [
             {
-                "campaign_id": w.campaign_id,
-                "demographic_key": w.demographic_key,
-                "demographic_value": w.demographic_value,
-                "target_percent": w.target_percent,
-                "actual_percent": w.actual_percent,
-                "weight": w.weight,
+                "campaign_id": campaign_id,
+                "demographic_key": demographic_key,
+                "demographic_value": bucket,
+                "target_percent": None,
+                "actual_percent": round(n / total * 100, 1),
+                "weight": None,
             }
-            for w in rows
+            for bucket, n in combined_counts.items()
+            if n > 0
+        ]
+    }
+
+
+@router.put("/demographic-targets")
+def set_demographic_targets(
+    targets: list[dict],
+    demographic_key: str = Query(default="age"),
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
+    """Admin sets the expected ("target") distribution for a campaign, e.g.
+    [{"demographic_value": "18-25", "target_percent": 20}, ...] for age, or
+    [{"demographic_value": "גוש דן", "target_percent": 40}, ...] for city.
+    Recomputes actual_percent/weight immediately against current data."""
+    if demographic_key not in _DEMOGRAPHIC_SCHEMES:
+        raise HTTPException(status_code=400, detail=f"Unknown demographic_key: {demographic_key}")
+    buckets, _ = _DEMOGRAPHIC_SCHEMES[demographic_key]
+
+    for t in targets:
+        value = t.get("demographic_value")
+        target_percent = t.get("target_percent")
+        if value not in buckets or target_percent is None:
+            raise HTTPException(status_code=400, detail=f"Invalid target entry: {t}")
+        row = (
+            db.query(DemographicWeight)
+            .filter(
+                DemographicWeight.campaign_id == campaign.id,
+                DemographicWeight.demographic_key == demographic_key,
+                DemographicWeight.demographic_value == value,
+            )
+            .first()
+        )
+        if row:
+            row.target_percent = float(target_percent)
+        else:
+            db.add(DemographicWeight(
+                campaign_id=campaign.id, demographic_key=demographic_key,
+                demographic_value=value, target_percent=float(target_percent),
+                weight=1.0,
+            ))
+    db.commit()
+    return _recompute_demographic_bias(campaign.id, demographic_key, db)
+
+
+@router.post("/demographic-targets/recompute")
+def recompute_demographic_targets(
+    demographic_key: str = Query(default="age"),
+    campaign: Campaign = Depends(get_owned_campaign),
+    db: Session = Depends(get_db),
+):
+    """Refresh actual_percent/weight for this campaign's existing targets
+    against the latest Interviewee data (e.g. after more calls happened)."""
+    return _recompute_demographic_bias(campaign.id, demographic_key, db)
+
+
+def _recompute_demographic_bias(campaign_id: int, demographic_key: str, db: Session) -> dict:
+    rows = db.query(DemographicWeight).filter(
+        DemographicWeight.campaign_id == campaign_id,
+        DemographicWeight.demographic_key == demographic_key,
+    ).all()
+    if not rows:
+        return {"weights": []}
+
+    counts = _compute_actual_distribution(campaign_id, demographic_key, db)
+    total = sum(counts.values())
+
+    for row in rows:
+        actual_pct = (counts.get(row.demographic_value, 0) / total * 100) if total else 0.0
+        row.actual_percent = round(actual_pct, 1)
+        row.weight = round(row.target_percent / actual_pct, 3) if actual_pct > 0 else 1.0
+    db.commit()
+
+    return {
+        "weights": [
+            {
+                "campaign_id": r.campaign_id,
+                "demographic_key": r.demographic_key,
+                "demographic_value": r.demographic_value,
+                "target_percent": r.target_percent,
+                "actual_percent": r.actual_percent,
+                "weight": r.weight,
+            }
+            for r in rows
         ]
     }
 

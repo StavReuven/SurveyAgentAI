@@ -115,7 +115,9 @@ _NOT_NOW = re.compile(
 )
 _REPEAT = re.compile(
     r"\b(repeat|say (that )?again|what did you say|didn'?t hear|didn'?t catch"
-    r"|come again|pardon|could you repeat|once more)\b"
+    r"|come again|pardon|could you repeat|once more"
+    r"|return the question|repeat the question|say the question again|ask (that|it) again"
+    r"|תחזור על השאלה|תגיד שוב|לא שמעתי|מה אמרת)\b"
     r"|^\s*what[?!]?\s*$",   # standalone "what" / "what?" only — not mid-sentence
     re.I | re.MULTILINE,
 )
@@ -174,8 +176,14 @@ _ESCALATE_MANAGER_RE = re.compile(
 )
 _PROFANITY = re.compile(
     r"\b(fuck|shit|bitch|asshole|bastard|damn it|crap|dick|pussy|motherfucker"
-    r"|wtf|go to hell|screw you|idiot|moron|stupid (bot|survey|call)"
-    r"|כסח|לך תזדיין|בן זונה|מה הבאסה|זיין|שמות גידוף)\b",
+    r"|wtf|go to hell|screw you|idiot|moron|stupid (bot|survey|call)|dumb|loser"
+    r"|כסח|לך תזדיין|תזדיין|מזדיין|בן זונה|מה הבאסה|זיין|שמות גידוף"
+    r"|מטומטם|מטומטמת|טמבל|אידיוט|דביל|דבילה|טיפש|טיפשה|חרא|דפוק|דפוקה"
+    r"|מפגר|חמור אתה|בהמה|מגעיל|מגעילה)\b"
+    # Self-censored spellings ("f***", "b****", "sh*t") — two or more
+    # consecutive asterisks essentially never appear in a spoken-survey
+    # transcript for any other reason, so treat them as censored profanity.
+    r"|\w\*{2,}\w*",
     re.I,
 )
 _NAVIGATION_RE = re.compile(
@@ -330,25 +338,12 @@ class RuleBasedFallback:
                 reason="operator returned control; re-ask current question",
             )
 
-        # ── early answer extraction (before intent patterns) ─────────────────
-        # For structured question types (rating/yes_no/mcq/numeric), if there is
-        # a clear extractable answer we accept it immediately, even if the utterance
-        # also contains a conversational phrase or stray "what" that would otherwise
-        # trigger REPEAT/CONVERSATIONAL incorrectly.
-        if q_type not in ("free_text",):
-            _early_answer = self._extract(lower, text, q_type, options)
-            if _early_answer:
-                ack = self._pick_ack(_early_answer, q_type, he)
-                return AgentDecision(
-                    intent=AgentIntent.ANSWER,
-                    confidence=0.80,
-                    next_action=NextAction.CONTINUE,
-                    response_text=self._build_transition(ack, next_question, he),
-                    should_save_answer=True,
-                    extracted_answer=_early_answer,
-                )
-
         # ── high-priority meta-intents ────────────────────────────────────────
+        # These must be checked BEFORE the structured-answer early extraction
+        # below: a rating answer like "2, this is ridiculous, get me a manager!"
+        # contains both an extractable digit AND an escalation request — if
+        # extraction ran first it would grab the "2" and silently swallow the
+        # escalation/profanity, which is exactly what must never happen.
         if _PROFANITY.search(lower):
             # Escalate immediately if: anger present in same utterance, OR already warned before
             anger_combined = bool(_ESCALATE.search(lower))
@@ -422,6 +417,25 @@ class RuleBasedFallback:
                 response_text=random.choice(_NOT_NOW_HE if he else _NOT_NOW_EN),
                 should_save_answer=False,
             )
+
+        # ── early answer extraction (before conversational/repeat patterns) ──
+        # For structured question types (rating/yes_no/mcq/numeric), if there is
+        # a clear extractable answer we accept it immediately, even if the utterance
+        # also contains a conversational phrase or stray "what" that would otherwise
+        # trigger REPEAT/CONVERSATIONAL incorrectly. Meta-intents (profanity,
+        # escalate, opt-out, not-now) were already checked above and always win.
+        if q_type not in ("free_text",):
+            _early_answer = self._extract(lower, text, q_type, options)
+            if _early_answer:
+                ack = self._pick_ack(_early_answer, q_type, he)
+                return AgentDecision(
+                    intent=AgentIntent.ANSWER,
+                    confidence=0.80,
+                    next_action=NextAction.CONTINUE,
+                    response_text=self._build_transition(ack, next_question, he),
+                    should_save_answer=True,
+                    extracted_answer=_early_answer,
+                )
 
         if _CONVERSATIONAL.search(lower):
             restate = f" {question.prompt}" if question else ""

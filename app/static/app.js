@@ -110,6 +110,7 @@ function renderQuestions() {
       <div class="actions">
         <button data-up="${q.id}" class="alt">Up</button>
         <button data-down="${q.id}" class="alt">Down</button>
+        <button data-edit="${q.id}" class="alt">Edit</button>
         <button data-delete="${q.id}" class="warn">Delete</button>
       </div>
     `;
@@ -261,6 +262,21 @@ function buildCampaignCard(c, { pending = false } = {}) {
 }
 
 async function loadCampaignCards() {
+  // The background poll (and several actions) call this while the builder
+  // panel may be open with the user actively typing in a field inside it.
+  // A full rebuild physically removes and reinserts builderPanel, which
+  // drops focus from whatever's focused — mid-keystroke, that feels like
+  // the page refreshed. If focus is currently inside builderPanel, just
+  // refresh that one card's stats instead of rebuilding the whole grid.
+  const focusInsideBuilder =
+    !builderPanel.classList.contains("hidden") &&
+    builderPanel.contains(document.activeElement) &&
+    document.activeElement !== document.body;
+  if (focusInsideBuilder && state.selectedCampaignId) {
+    await updateCampaignCardStats(state.selectedCampaignId);
+    return;
+  }
+
   const campaigns = await api("/api/campaigns/summary");
   state.campaignSummaries = campaigns;
 
@@ -288,6 +304,28 @@ async function loadCampaignCards() {
       builderPanel.classList.add("hidden");
       state.selectedCampaignId = null;
     }
+  }
+}
+
+// Lightweight alternative to loadCampaignCards() for use while the builder
+// panel is open and the user may be actively typing inside it (adding a
+// question/rule, uploading participants). loadCampaignCards() wipes the
+// whole grid and physically re-parents builderPanel, which drops focus
+// from any input inside it — feels like the page refreshed mid-typing.
+// This just patches the one card's stat numbers in place.
+async function updateCampaignCardStats(campaignId) {
+  try {
+    const campaigns = await api("/api/campaigns/summary");
+    state.campaignSummaries = campaigns;
+    const summary = campaigns.find((c) => c.id === Number(campaignId));
+    if (!summary) return;
+    const card = campaignCards.querySelector(`[data-campaign-id="${campaignId}"]`);
+    if (!card) return;
+    const nums = card.querySelectorAll(".camp-stats-num");
+    if (nums[0]) nums[0].textContent = summary.question_count;
+    if (nums[1]) nums[1].textContent = summary.participant_count;
+  } catch (err) {
+    // Non-critical UI sync; ignore failures here.
   }
 }
 
@@ -517,7 +555,23 @@ refreshAttemptsButton.addEventListener("click", async () => {
   }
 });
 
-document.getElementById("question-form").addEventListener("submit", async (e) => {
+const questionForm = document.getElementById("question-form");
+const questionFormSubmit = document.getElementById("question-form-submit");
+const questionFormCancel = document.getElementById("question-form-cancel");
+let editingQuestionId = null;
+
+function exitQuestionEditMode() {
+  editingQuestionId = null;
+  questionForm.reset();
+  questionFormSubmit.textContent = "הוסף שאלה";
+  questionFormCancel.classList.add("hidden");
+}
+
+questionFormCancel.addEventListener("click", () => {
+  exitQuestionEditMode();
+});
+
+questionForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const campaignId = getSelectedCampaignId();
@@ -539,17 +593,29 @@ document.getElementById("question-form").addEventListener("submit", async (e) =>
       payload.config.options = options;
     }
 
-    await api(`/api/campaigns/${campaignId}/questions`, {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify(payload),
-    });
+    if (editingQuestionId) {
+      await api(`/api/questions/${editingQuestionId}`, {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      });
+      exitQuestionEditMode();
+      state.questions = await api(`/api/campaigns/${campaignId}/questions`);
+      renderQuestions();
+      showToast("Question updated");
+    } else {
+      await api(`/api/campaigns/${campaignId}/questions`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      });
 
-    e.target.reset();
-    state.questions = await api(`/api/campaigns/${campaignId}/questions`);
-    renderQuestions();
-    await loadCampaignCards();
-    showToast("Question added");
+      e.target.reset();
+      state.questions = await api(`/api/campaigns/${campaignId}/questions`);
+      renderQuestions();
+      await updateCampaignCardStats(campaignId);
+      showToast("Question added");
+    }
   } catch (err) {
     showToast(err.message);
   }
@@ -561,10 +627,28 @@ questionList.addEventListener("click", async (e) => {
     return;
   }
 
+  if (btn.dataset.edit) {
+    const q = state.questions.find((item) => item.id === Number(btn.dataset.edit));
+    if (!q) return;
+    editingQuestionId = q.id;
+    questionForm.elements.key.value = q.key;
+    questionForm.elements.prompt.value = q.prompt;
+    questionForm.elements.question_type.value = q.question_type;
+    questionForm.elements.options.value = (q.config && q.config.options) ? q.config.options.join(", ") : "";
+    questionForm.elements.required.checked = !!q.required;
+    questionFormSubmit.textContent = "עדכן שאלה";
+    questionFormCancel.classList.remove("hidden");
+    questionForm.elements.prompt.focus();
+    return;
+  }
+
   try {
     const campaignId = getSelectedCampaignId();
     if (btn.dataset.delete) {
       await api(`/api/questions/${btn.dataset.delete}`, { method: "DELETE" });
+      if (editingQuestionId === Number(btn.dataset.delete)) {
+        exitQuestionEditMode();
+      }
     }
 
     if (btn.dataset.up || btn.dataset.down) {
@@ -585,7 +669,7 @@ questionList.addEventListener("click", async (e) => {
 
     state.questions = await api(`/api/campaigns/${campaignId}/questions`);
     renderQuestions();
-    await loadCampaignCards();
+    await updateCampaignCardStats(campaignId);
     showToast("Questions updated");
   } catch (err) {
     showToast(err.message);
@@ -659,7 +743,7 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
 
     const participants = await api(`/api/campaigns/${campaignId}/participants`);
     renderParticipants(participants);
-    await loadCampaignCards();
+    await updateCampaignCardStats(campaignId);
     showToast("Participants uploaded");
   } catch (err) {
     showToast(err.message);
@@ -672,5 +756,13 @@ loadCampaignCards().catch((err) => {
 
 const CAMPAIGN_POLL_INTERVAL_MS = 8000;
 setInterval(() => {
+  // Never auto-refresh the grid while the builder panel is open — doing so
+  // rebuilds the DOM and would interrupt whatever the user is doing inside
+  // it (typing a question, filling a rule, etc.), even outside of any
+  // submit action. Just quietly keep that one card's stats current instead.
+  if (!builderPanel.classList.contains("hidden") && state.selectedCampaignId) {
+    updateCampaignCardStats(state.selectedCampaignId).catch(() => {});
+    return;
+  }
   loadCampaignCards().catch(() => {});
 }, CAMPAIGN_POLL_INTERVAL_MS);

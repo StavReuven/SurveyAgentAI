@@ -19,7 +19,7 @@
     .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 12px 24px; border-radius: 8px; z-index: 9999; transition: opacity 0.3s; }
   </style>
   <script src="/static/auth-guard.js"></script>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=3" defer></script>
 </head>
 <body>
   <script>guardPage(['admin', 'operator', 'analyst']);</script>
@@ -112,7 +112,10 @@
               <input name="options" placeholder="אפשרויות (מופרד בפסיק)" style="padding:8px; border:1px solid var(--border); border-radius:6px; flex:1;" />
             </div>
             <div style="margin-bottom:12px;"><label><input name="required" type="checkbox" checked /> שאלת חובה</label></div>
-            <button type="submit" class="btn-primary" style="width:100%">הוסף שאלה</button>
+            <div style="display:flex; gap:8px;">
+              <button type="submit" id="question-form-submit" class="btn-primary" style="width:100%">הוסף שאלה</button>
+              <button type="button" id="question-form-cancel" class="alt hidden" style="white-space:nowrap;">ביטול</button>
+            </div>
           </form>
           <ul id="question-list" class="list"></ul>
         </article>

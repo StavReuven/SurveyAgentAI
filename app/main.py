@@ -41,6 +41,10 @@ from .models import (
     Question,
 )
 from .intelligence.cross_survey_facts import match_answer
+from .intelligence.fact_check import fact_check_answer, fact_check_campaign
+from .intelligence.free_text import analyze_answer, analyze_campaign_free_text
+from .intelligence.interviewee import build_interviewee_profiles, enrich_interviewee_from_session
+from .intelligence.ner import process_session_ner
 from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.nlu.schema import IntentType
@@ -355,7 +359,8 @@ async def _dial_participant(db: Session, campaign: Campaign, participant: Partic
 
     try:
         ctx, _result = await _create_and_start_voice_session(
-            campaign, participant.phone_number, participant.locale, db
+            campaign, participant.phone_number, participant.locale, db,
+            participant_id=participant.id,
         )
         await get_gateway().initiate_call(
             to_number=participant.phone_number,
@@ -442,6 +447,14 @@ async def _process_scheduler_tick(db: Session, execution: CampaignExecution):
 
         await _dial_participant(db, campaign, participant, attempt_number)
         remaining_budget -= 1
+
+        # Stagger back-to-back outbound dials — placing two calls within the
+        # same 1-2s window has repeatedly caused the first of the pair to
+        # come back "no-answer" from Twilio (never even reaching in-progress)
+        # despite the line actually being picked up, suggesting a carrier/
+        # trunk concurrency issue on near-simultaneous outbound calls.
+        if remaining_budget > 0:
+            await asyncio.sleep(3)
 
     execution.last_tick_at = now_utc
 
@@ -755,6 +768,30 @@ def delete_campaign(
     # relationships have ON DELETE CASCADE configured at the DB level, so a
     # bare db.delete(campaign) fails with a ForeignKeyViolation as soon as any
     # analytics/call data exists for the campaign.
+
+    # Cross-survey matching materializes an Answer row in the OTHER (target)
+    # campaign, but that row's session_id still points at THIS campaign's
+    # CallLog. Answer.campaign_id == campaign_id alone misses it, so deleting
+    # call_logs below would break answers.session_id -> call_logs.session_id
+    # for that other campaign. Must be cleaned up first, regardless of which
+    # campaign the materialized answer itself belongs to.
+    own_session_ids = [
+        row[0] for row in db.query(CallLog.session_id).filter(CallLog.campaign_id == campaign_id).all()
+    ]
+    if own_session_ids:
+        cross_answer_ids = [
+            row[0] for row in db.query(Answer.id).filter(
+                Answer.session_id.in_(own_session_ids),
+                Answer.campaign_id != campaign_id,
+            ).all()
+        ]
+        if cross_answer_ids:
+            db.query(AnswerLabel).filter(AnswerLabel.answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(AnswerFactCheck).filter(AnswerFactCheck.answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(FreeTextAnalysis).filter(FreeTextAnalysis.answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(CrossSurveyMatch).filter(CrossSurveyMatch.source_answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(Answer).filter(Answer.id.in_(cross_answer_ids)).delete(synchronize_session=False)
+
     answer_ids = [
         row[0] for row in db.query(Answer.id).filter(Answer.campaign_id == campaign_id).all()
     ]
@@ -1252,6 +1289,61 @@ def list_call_attempts(campaign_id: int, limit: int = 30, db: Session = Depends(
     ]
 
 
+# ── Intelligence analysis (manual trigger + backfill for existing data) ───
+# Cross-survey matching already runs automatically per-call (see
+# _persist_call_turn); these routes exist so the "Run Intelligence
+# Analysis" button on the analytics page (and older answers from before
+# this wiring existed) can (re)run NER/free-text/fact-check/cross-survey
+# on demand, org-scoped via get_owned_campaign.
+
+@app.post("/api/campaigns/{campaign_id}/intelligence/ner")
+def run_campaign_ner(campaign: Campaign = Depends(get_owned_campaign), db: Session = Depends(get_db)):
+    session_ids = [
+        row[0] for row in
+        db.query(CallLog.session_id).filter(CallLog.campaign_id == campaign.id).distinct().all()
+    ]
+    total = 0
+    for sid in session_ids:
+        total += process_session_ner(sid, campaign.id, db)
+    db.commit()
+    return {"entities_found": total, "sessions_processed": len(session_ids)}
+
+
+@app.post("/api/campaigns/{campaign_id}/intelligence/free-text")
+async def run_campaign_free_text(campaign: Campaign = Depends(get_owned_campaign), db: Session = Depends(get_db)):
+    count = await analyze_campaign_free_text(campaign.id, db)
+    db.commit()
+    return {"answers_analyzed": count}
+
+
+@app.post("/api/campaigns/{campaign_id}/intelligence/fact-check")
+async def run_campaign_fact_check(campaign: Campaign = Depends(get_owned_campaign), db: Session = Depends(get_db)):
+    count = await fact_check_campaign(campaign.id, db)
+    db.commit()
+    return {"answers_checked": count}
+
+
+@app.post("/api/campaigns/{campaign_id}/intelligence/cross-survey")
+def run_campaign_cross_survey(campaign: Campaign = Depends(get_owned_campaign), db: Session = Depends(get_db)):
+    answers = (
+        db.query(Answer)
+        .filter(Answer.campaign_id == campaign.id, Answer.answer_type == "free_text")
+        .all()
+    )
+    total = 0
+    for answer in answers:
+        total += match_answer(db, answer)
+    db.commit()
+    return {"matches_created": total}
+
+
+@app.post("/api/intelligence/interviewees/build")
+def run_build_interviewees(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    count = build_interviewee_profiles(db, user.organization_id)
+    db.commit()
+    return {"sessions_processed": count}
+
+
 # ===========================================================================
 # SAA-50: Voice AI Pipeline endpoints
 # ===========================================================================
@@ -1341,15 +1433,42 @@ def _load_question_contexts(campaign_id: int, db: Session) -> list[QuestionConte
     ]
 
 
+# Auto-asked ahead of every campaign's own questions, on every call, so age/
+# city→district bias correction (see app/analytics/router.py) works without
+# a campaign author having to remember to add these questions themselves.
+# question_id=-1 is a sentinel, never written as a real FK value — see the
+# question_key check in _persist_call_turn's answer-saving loop — and these
+# are also excluded there from cross-survey matching/NER/fact-check, since
+# they're intake metadata, not actual survey content.
+_AUTO_DEMOGRAPHIC_KEYS = ("auto_age", "auto_city")
+
+
+def _auto_demographic_questions(campaign: Campaign) -> list[QuestionContext]:
+    is_hebrew = (campaign.language or "en").startswith("he")
+    return [
+        QuestionContext(
+            question_id=-1, question_key="auto_age",
+            prompt=("מה גילך?" if is_hebrew else "What is your age?"),
+            question_type="free_text", order_index=-2, config={},
+        ),
+        QuestionContext(
+            question_id=-1, question_key="auto_city",
+            prompt=("באיזו עיר או אזור אתה גר?" if is_hebrew else "Which city or area do you live in?"),
+            question_type="free_text", order_index=-1, config={},
+        ),
+    ]
+
+
 async def _create_and_start_voice_session(
     campaign: Campaign,
     participant_phone: str,
     locale: str | None,
     db: Session,
+    participant_id: int | None = None,
 ):
     """Shared by the manual voice-session API and the campaign auto-dial
     scheduler: builds the pipeline session, registers it, and logs the call."""
-    question_contexts = _load_question_contexts(campaign.id, db)
+    question_contexts = _auto_demographic_questions(campaign) + _load_question_contexts(campaign.id, db)
     if not question_contexts:
         raise ValueError("Campaign has no questions")
 
@@ -1398,6 +1517,7 @@ async def _create_and_start_voice_session(
     call_log = CallLog(
         campaign_id=campaign.id,
         session_id=ctx.session_id,
+        participant_id=participant_id,
         status="active",
         started_at=datetime.now(timezone.utc),
     )
@@ -1451,6 +1571,7 @@ class _CallTurnSnapshot:
     """
     session_id: str
     campaign_id: int
+    participant_phone: str
     answers: dict[str, str]
     history: list[dict]
     questions_by_key: dict[str, QuestionContext]
@@ -1505,7 +1626,10 @@ def _persist_call_turn(snap: _CallTurnSnapshot) -> None:
                 new_answer = Answer(
                     session_id=snap.session_id,
                     campaign_id=snap.campaign_id,
-                    question_id=q.question_id,
+                    # question_id is a sentinel (-1) for the auto-asked
+                    # age/city questions — there's no real Question row for
+                    # them, so don't write it as if there were.
+                    question_id=(None if key in _AUTO_DEMOGRAPHIC_KEYS else q.question_id),
                     question_key=key,
                     raw_text=value,
                     normalized_value=value,
@@ -1528,14 +1652,67 @@ def _persist_call_turn(snap: _CallTurnSnapshot) -> None:
         # Full conversation history for audit / dashboard replay
         call_log.history = list(snap.history)
 
+        # Populate ConversationTurn rows from the in-memory history — nothing
+        # else in the app writes these, but NER reads from this table (per
+        # caller turn), not from CallLog.history's JSON blob.
+        db.query(ConversationTurn).filter(ConversationTurn.session_id == snap.session_id).delete()
+        turn_index = 0
+        last_question_key: str | None = None
+        for event in snap.history:
+            if event.get("event") == "answer_accepted":
+                last_question_key = event.get("key")
+            elif event.get("event") == "caller_input":
+                db.add(ConversationTurn(
+                    session_id=snap.session_id, campaign_id=snap.campaign_id,
+                    turn_index=turn_index, speaker="caller", text=event.get("text") or "",
+                    stt_confidence=event.get("confidence"), question_key=last_question_key,
+                ))
+                turn_index += 1
+            elif event.get("event") == "bot_response":
+                db.add(ConversationTurn(
+                    session_id=snap.session_id, campaign_id=snap.campaign_id,
+                    turn_index=turn_index, speaker="bot", text=event.get("text") or "",
+                    dialogue_action=str(event.get("action") or ""), question_key=last_question_key,
+                ))
+                turn_index += 1
+
+        db.flush()  # assign IDs to any newly-created Answer rows above
+
         # Automatic cross-survey matching — previously this only ever ran
         # via a manual `python run_cross_survey.py` scan of the whole DB;
         # now it runs right when a call finishes, scoped to just this
-        # call's own answers instead of rescanning everything.
-        db.flush()  # assign IDs to any newly-created Answer rows above
-        for saved_answer in saved_answers:
+        # call's own answers instead of rescanning everything. The
+        # auto-asked age/city answers are excluded — they're intake
+        # metadata for bias correction, not survey content to analyze.
+        content_answers = [a for a in saved_answers if a.question_key not in _AUTO_DEMOGRAPHIC_KEYS]
+        for saved_answer in content_answers:
             if saved_answer.answer_type == "free_text":
                 match_answer(db, saved_answer)
+
+        # Automatic NER, free-text analysis, fact-check, and interviewee
+        # enrichment — same "run automatically right when a call ends"
+        # pattern as cross-survey matching above, instead of requiring a
+        # manual analytics-page button click.
+        try:
+            process_session_ner(snap.session_id, snap.campaign_id, db)
+        except Exception:
+            logger.exception("NER failed for session %s", snap.session_id)
+        for saved_answer in content_answers:
+            try:
+                if saved_answer.answer_type == "free_text":
+                    asyncio.run(analyze_answer(saved_answer, db))
+                asyncio.run(fact_check_answer(saved_answer, db))
+            except Exception:
+                logger.exception(
+                    "Free-text/fact-check analysis failed for answer %s", saved_answer.id
+                )
+        try:
+            enrich_interviewee_from_session(
+                snap.session_id, snap.participant_phone, db, campaign_id=snap.campaign_id
+            )
+        except Exception:
+            logger.exception("Interviewee enrichment failed for session %s", snap.session_id)
+
         db.commit()
     except Exception:
         logger.exception("Background call-turn persistence failed for session %s", snap.session_id)
@@ -1694,6 +1871,7 @@ async def process_voice_turn(
         snapshot = _CallTurnSnapshot(
             session_id=session_id,
             campaign_id=campaign_id,
+            participant_phone=ctx.participant_phone,
             answers=dict(ctx.answers),
             history=list(ctx.history),
             questions_by_key={q.question_key: q for q in ctx.questions},
