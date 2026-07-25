@@ -43,7 +43,13 @@ class TelephonyGateway:
                 status_callback=status_url,
                 status_callback_method="POST",
                 status_callback_event=["initiated", "ringing", "answered", "completed"],
-                timeout=60,
+                # Twilio actively CANCELs (SIP 487) the ringing leg once this
+                # many seconds pass with no answer — confirmed via a live call's
+                # Twilio Console trace: duration was exactly 90s with
+                # SipResponseCode=487, meaning WE hung it up, not the carrier.
+                # 90s still wasn't enough for the callee to reach the phone in
+                # time, so give it more headroom.
+                timeout=150,
             )
         except TwilioRestException as exc:
             raise RuntimeError(f"Twilio error: {exc.msg}") from exc

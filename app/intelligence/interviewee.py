@@ -183,6 +183,16 @@ def enrich_interviewee_from_session(
     """
     interviewee = get_or_create_interviewee(participant_phone, db)
 
+    # If this interviewee row was already loaded earlier in this same DB
+    # session (e.g. build_interviewee_profiles looping over several sessions
+    # for the same person), SQLAlchemy's identity map hands back that cached
+    # Python object instead of re-querying — so a concurrently-committed
+    # update from another session/thread (e.g. a live call's background
+    # persistence) would be invisible here. Merging demographics onto that
+    # stale copy and writing it back then silently clobbers the newer data.
+    # Force a fresh read of the current row before merging.
+    db.refresh(interviewee)
+
     # Link answer rows to this interviewee
     db.query(Answer).filter(Answer.session_id == session_id).update(
         {"interviewee_id": interviewee.id}, synchronize_session="fetch"
@@ -212,7 +222,15 @@ def enrich_interviewee_from_session(
         .distinct()
         .all()
     )
-    demo = interviewee.demographics or {}
+    # Must be a genuinely new dict, not the same object as interviewee.demographics
+    # (which "x or {}" returns when x is already non-empty) — SQLAlchemy's JSON
+    # column change-tracking only fires on attribute reassignment to a different
+    # object, so mutating and reassigning the SAME dict is silently never
+    # persisted. This is why only the very first enrichment per person (when
+    # demographics started as {}, a falsy value that forces a new object) ever
+    # actually wrote to the DB — every later call for the same person appeared
+    # to work (correct in-memory dict) but silently discarded the commit.
+    demo = dict(interviewee.demographics or {})
     demo["campaigns_count"] = len(session_campaign_ids)
     demo["total_answers"] = (
         db.query(Answer).filter(Answer.interviewee_id == interviewee.id).count()

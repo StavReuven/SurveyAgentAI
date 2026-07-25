@@ -448,6 +448,14 @@ async def _process_scheduler_tick(db: Session, execution: CampaignExecution):
         await _dial_participant(db, campaign, participant, attempt_number)
         remaining_budget -= 1
 
+        # Stagger back-to-back outbound dials — placing two calls within the
+        # same 1-2s window has repeatedly caused the first of the pair to
+        # come back "no-answer" from Twilio (never even reaching in-progress)
+        # despite the line actually being picked up, suggesting a carrier/
+        # trunk concurrency issue on near-simultaneous outbound calls.
+        if remaining_budget > 0:
+            await asyncio.sleep(3)
+
     execution.last_tick_at = now_utc
 
 
@@ -760,6 +768,30 @@ def delete_campaign(
     # relationships have ON DELETE CASCADE configured at the DB level, so a
     # bare db.delete(campaign) fails with a ForeignKeyViolation as soon as any
     # analytics/call data exists for the campaign.
+
+    # Cross-survey matching materializes an Answer row in the OTHER (target)
+    # campaign, but that row's session_id still points at THIS campaign's
+    # CallLog. Answer.campaign_id == campaign_id alone misses it, so deleting
+    # call_logs below would break answers.session_id -> call_logs.session_id
+    # for that other campaign. Must be cleaned up first, regardless of which
+    # campaign the materialized answer itself belongs to.
+    own_session_ids = [
+        row[0] for row in db.query(CallLog.session_id).filter(CallLog.campaign_id == campaign_id).all()
+    ]
+    if own_session_ids:
+        cross_answer_ids = [
+            row[0] for row in db.query(Answer.id).filter(
+                Answer.session_id.in_(own_session_ids),
+                Answer.campaign_id != campaign_id,
+            ).all()
+        ]
+        if cross_answer_ids:
+            db.query(AnswerLabel).filter(AnswerLabel.answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(AnswerFactCheck).filter(AnswerFactCheck.answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(FreeTextAnalysis).filter(FreeTextAnalysis.answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(CrossSurveyMatch).filter(CrossSurveyMatch.source_answer_id.in_(cross_answer_ids)).delete(synchronize_session=False)
+            db.query(Answer).filter(Answer.id.in_(cross_answer_ids)).delete(synchronize_session=False)
+
     answer_ids = [
         row[0] for row in db.query(Answer.id).filter(Answer.campaign_id == campaign_id).all()
     ]

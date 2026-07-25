@@ -9,7 +9,7 @@ from .session_store import CallState, SessionStore
 
 logger = logging.getLogger(__name__)
 
-RINGING_TIMEOUT_SECONDS   = 30   # no answer within 30 s → timeout
+RINGING_TIMEOUT_SECONDS   = 150   # matches the Twilio call's own `timeout` (see gateway.py)
 IN_PROGRESS_TIMEOUT_SECONDS = 600  # call stuck in-progress for 10 min → timeout
 
 
