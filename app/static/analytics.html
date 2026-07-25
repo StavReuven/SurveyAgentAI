@@ -290,8 +290,48 @@
       <span style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;"><span class="bias-dot" style="background:#e2e8f0;border:1px dashed #94a3b8;"></span> יעד</span>
     </div>
     <div id="bias-empty" class="empty-state" style="display:none;">
-      אין נתוני משקלים דמוגרפיים לסקר זה.<br>
-      <small>הוסף משקלים דמוגרפיים דרך <code>PUT /api/campaigns/{id}/weights</code></small>
+      אין עדיין נתוני גיל למדגם זה.
+    </div>
+    <div id="bias-targets-form" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;text-align:right;">
+        קבע יעד אחוזים (%) לכל קבוצת גיל, כדי להשוות מול הפילוח בפועל:
+      </div>
+      <div id="bias-target-inputs" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;align-items:center;">
+        <span id="bias-target-status" style="font-size:12px;color:var(--text-muted);"></span>
+        <button id="btn-save-bias-targets" class="btn-primary" style="font-size:13px;padding:6px 16px;">שמור יעדים</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Demographic bias — city/district -->
+  <div class="chart-card" style="margin-bottom:24px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div class="auto-badge"><span class="live-dot"></span> מדגם תוקן אוטומטית</div>
+      <div>
+        <div class="chart-title">זיהוי ותיקון הטיות במדגם — אזור מגורים</div>
+        <div class="chart-subtitle">אחוז בפועל לעומת יעד לפי מחוז</div>
+      </div>
+    </div>
+    <div class="chart-wrapper" style="height:220px;margin-top:16px;">
+      <canvas id="biasChartCity"></canvas>
+    </div>
+    <div class="bias-legend">
+      <span style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;"><span class="bias-dot" style="background:#3b82f6;"></span> בפועל</span>
+      <span style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;"><span class="bias-dot" style="background:#e2e8f0;border:1px dashed #94a3b8;"></span> יעד</span>
+    </div>
+    <div id="bias-empty-city" class="empty-state" style="display:none;">
+      אין עדיין נתוני עיר/מחוז למדגם זה.
+    </div>
+    <div id="bias-targets-form-city" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;text-align:right;">
+        קבע יעד אחוזים (%) לכל מחוז, כדי להשוות מול הפילוח בפועל:
+      </div>
+      <div id="bias-target-inputs-city" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;align-items:center;">
+        <span id="bias-target-status-city" style="font-size:12px;color:var(--text-muted);"></span>
+        <button id="btn-save-bias-targets-city" class="btn-primary" style="font-size:13px;padding:6px 16px;">שמור יעדים</button>
+      </div>
     </div>
   </div>
 
@@ -529,14 +569,44 @@
   }
 
   // ── Demographic bias ───────────────────────────────────────────────────────
-  async function loadBias() {
+  // Two bias dimensions, sharing one set of render/save/load functions —
+  // "suffix" picks the DOM elements ('' for age, '-city' for city/district).
+  const BIAS_DIMENSIONS = [
+    { key: 'age', suffix: '', chartKey: 'bias', buckets: ['18-25', '26-35', '36-50', '51-65', '65+'] },
+    { key: 'city', suffix: '-city', chartKey: 'biasCity', buckets: ['דרום', 'צפון', 'גוש דן', 'ירושלים'] },
+  ];
+
+  function renderBiasTargetsForm(dim, existingWeights) {
+    const form = $(`bias-targets-form${dim.suffix}`);
+    if (!campaignId) {
+      form.style.display = 'none';
+      return;
+    }
+    form.style.display = 'block';
+    const targetByBucket = {};
+    (existingWeights || []).forEach(w => { targetByBucket[w.demographic_value] = w.target_percent; });
+
+    const inputsEl = $(`bias-target-inputs${dim.suffix}`);
+    inputsEl.innerHTML = dim.buckets.map(bucket => `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+        <label style="font-size:12px;color:var(--text-muted);">${bucket}</label>
+        <input type="number" min="0" max="100" step="1" data-bucket="${bucket}"
+               value="${targetByBucket[bucket] ?? ''}" placeholder="%"
+               style="width:64px;padding:6px;border:1px solid var(--border);border-radius:6px;text-align:center;">
+      </div>
+    `).join('');
+  }
+
+  async function loadBiasDimension(dim) {
     const url = campaignId
-      ? `/api/analytics/demographic-bias?campaign_id=${campaignId}`
-      : '/api/analytics/demographic-bias';
+      ? `/api/analytics/demographic-bias?campaign_id=${campaignId}&demographic_key=${dim.key}`
+      : `/api/analytics/demographic-bias?demographic_key=${dim.key}`;
     const d = await api(url);
 
-    destroyChart('bias');
-    const biasEmpty = $('bias-empty');
+    destroyChart(dim.chartKey);
+    const biasEmpty = $(`bias-empty${dim.suffix}`);
+    const hasTargets = d.weights.some(w => w.target_percent !== null && w.target_percent !== undefined);
+    renderBiasTargetsForm(dim, hasTargets ? d.weights : null);
 
     if (!d.weights.length) {
       biasEmpty.style.display = 'block';
@@ -548,7 +618,7 @@
     const actual = d.weights.map(w => w.actual_percent ?? 0);
     const target = d.weights.map(w => w.target_percent);
 
-    charts['bias'] = new Chart($('biasChart'), {
+    charts[dim.chartKey] = new Chart($(`biasChart${dim.key === 'city' ? 'City' : ''}`), {
       type: 'bar',
       data: {
         labels,
@@ -586,6 +656,39 @@
         }
       }
     });
+  }
+
+  for (const dim of BIAS_DIMENSIONS) {
+    $(`btn-save-bias-targets${dim.suffix}`).addEventListener('click', async () => {
+      if (!campaignId) return;
+      const status = $(`bias-target-status${dim.suffix}`);
+      const inputs = [...document.querySelectorAll(`#bias-target-inputs${dim.suffix} input`)];
+      const targets = inputs
+        .filter(inp => inp.value !== '')
+        .map(inp => ({ demographic_value: inp.dataset.bucket, target_percent: Number(inp.value) }));
+
+      if (!targets.length) {
+        status.textContent = 'הזן לפחות ערך אחד';
+        return;
+      }
+      try {
+        await api(`/api/campaigns/${campaignId}/analytics/demographic-targets?demographic_key=${dim.key}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(targets),
+        });
+        status.textContent = '✅ נשמר';
+        await loadBiasDimension(dim);
+      } catch (e) {
+        status.textContent = '❌ ' + e.message;
+      }
+    });
+  }
+
+  async function loadBias() {
+    for (const dim of BIAS_DIMENSIONS) {
+      await loadBiasDimension(dim);
+    }
   }
 
   // ── Free-text label distribution ──────────────────────────────────────────
