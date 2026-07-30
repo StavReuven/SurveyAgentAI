@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,6 +17,22 @@ from ..models import Answer, AnswerFactCheck, AnswerLabel, CallLog, Campaign, Co
 router = APIRouter(prefix="/api/campaigns/{campaign_id}/analytics", tags=["analytics"])
 
 global_router = APIRouter(prefix="/api/analytics", tags=["analytics-global"])
+
+
+@dataclass
+class QualitySettings:
+    """Global, mutable "Data Quality" knobs — same in-place-mutation pattern as
+    app.voice.mirroring.policy.MirroringSettings, so the Settings page can update
+    live behavior without a DB round-trip. Defaults match the values that used
+    to be hardcoded in analytics_overview()/anomaly_scatter() below, so wiring
+    this in changes nothing until someone actually moves the slider."""
+
+    enabled: bool = True
+    anomaly_quality_threshold: float = 55.0  # 0-100 scale; drives anomaly-scatter classification
+
+
+# Module-level singleton; main.py imports this directly to expose GET/PUT endpoints.
+quality_settings = QualitySettings()
 
 
 def _get_campaign_or_404(campaign_id: int, db: Session, organization_id: int | None = None) -> Campaign:
@@ -258,18 +275,22 @@ def analytics_overview(
     avg_conf = conf_q.scalar()
     data_quality = round((avg_conf or 0) * 100, 1)
 
-    # Anomalies: calls with very short duration (<30s) or rapport below 0.5
+    # Anomalies: calls with very short duration (<30s) or rapport below 0.5.
+    # Gated by quality_settings.enabled (Settings → Data Quality); the fixed
+    # 30s/0.5 thresholds here are intentionally independent of the
+    # configurable anomaly_quality_threshold used by anomaly_scatter() below.
     anomaly_count = 0
-    logs = _call_q(db, scoped_ids).filter(
-        CallLog.status == "completed",
-        CallLog.ended_at.isnot(None),
-    ).all()
-    for log in logs:
-        duration = (log.ended_at - log.started_at).total_seconds() if log.ended_at and log.started_at else None
-        is_short = duration is not None and duration < 30
-        is_low_rapport = log.rapport_score is not None and log.rapport_score < 0.5
-        if is_short or is_low_rapport:
-            anomaly_count += 1
+    if quality_settings.enabled:
+        logs = _call_q(db, scoped_ids).filter(
+            CallLog.status == "completed",
+            CallLog.ended_at.isnot(None),
+        ).all()
+        for log in logs:
+            duration = (log.ended_at - log.started_at).total_seconds() if log.ended_at and log.started_at else None
+            is_short = duration is not None and duration < 30
+            is_low_rapport = log.rapport_score is not None and log.rapport_score < 0.5
+            if is_short or is_low_rapport:
+                anomaly_count += 1
 
     # Sample validity: % of completed calls with at least one answer
     sessions_with_answers = (
@@ -359,7 +380,9 @@ def anomaly_scatter(
             quality = round((log.rapport_score or 0.75) * 100, 1)
 
         point = {"x": round(duration), "y": quality, "session_id": log.session_id}
-        is_anomaly = duration < 30 or quality < 55
+        is_anomaly = quality_settings.enabled and (
+            duration < 30 or quality < quality_settings.anomaly_quality_threshold
+        )
         if is_anomaly:
             anomalies.append(point)
         else:

@@ -23,6 +23,9 @@ class EscalationConfig:
     high_hesitation_threshold: float = 0.40   # hesitation_rate above this → distress
     low_rapport_threshold: float = 0.45       # avg STT confidence below this → low rapport
     max_retries: int = 4              # FSM retry_count at or above this → escalate
+    enabled: bool = True              # gates the psycho-adaptive rules below (4 & 5) only —
+                                       # explicit agent/profanity/anger and FSM-structural
+                                       # escalations (rules 1-3) always stay active regardless
 
 
 def evaluate(
@@ -51,6 +54,12 @@ def evaluate(
     unclear_streak = _count_unclear_streak(ctx)
     if unclear_streak >= cfg.max_unclear_streak:
         return EscalationReason.REPEATED_UNCLEAR
+
+    # Rules 4 & 5 are the "automatic intervention" rules exposed as a single
+    # on/off toggle in Settings — explicit agent/profanity/anger (rule 1) and
+    # FSM-structural escalations (rules 2-3) above are never gated by this.
+    if not cfg.enabled:
+        return None
 
     # Rule 4 — psycho-adaptive: high hesitation rate (caller distressed)
     cal = ctx.mirroring_calibration

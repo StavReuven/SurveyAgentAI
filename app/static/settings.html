@@ -59,7 +59,7 @@
         <div class="setting-row">
           <div>
             <div class="setting-row-label">הפעל Voice Mirroring</div>
-            <div class="setting-row-desc">התאמה אוטומטית של קצב, טון ואנרגיה לפי המרואיין</div>
+            <div class="setting-row-desc">התאמה אוטומטית של קצב וגובה טון לפי המרואיין, בזמן אמת</div>
           </div>
           <label class="toggle-switch"><input type="checkbox" id="g-mirroring-enabled" checked><span class="toggle-slider"></span></label>
         </div>
@@ -67,24 +67,25 @@
           <div class="setting-row-label" style="margin-bottom:12px;">הגדרות מתקדמות</div>
           <div class="grid-2">
             <div class="range-row">
-              <div class="range-row-top"><span>רגישות להתאמת טון</span><span id="g-tone-val">65</span></div>
-              <input type="range" min="0" max="100" value="65" id="g-tone">
+              <div class="range-row-top"><span>מגבלת שינוי קצב דיבור (%)</span><span id="g-rate-val">35</span></div>
+              <input type="range" min="0" max="50" step="1" value="35" id="g-rate">
             </div>
             <div class="range-row">
-              <div class="range-row-top"><span>רגישות להתאמת קצב</span><span id="g-pace-val">75</span></div>
-              <input type="range" min="0" max="100" value="75" id="g-pace">
+              <div class="range-row-top"><span>מגבלת שינוי גובה טון (semitones)</span><span id="g-pitch-val">2</span></div>
+              <input type="range" min="0" max="6" step="0.5" value="2" id="g-pitch">
             </div>
           </div>
           <div class="grid-2" style="margin-top:14px;">
-            <div>
-              <div class="setting-row-desc" style="margin-bottom:6px;">זמן התאמה (שניות)</div>
-              <input class="form-input" type="number" id="g-adapt-seconds" value="10">
+            <div class="range-row">
+              <div class="range-row-top"><span>סף כיבוי Rapport (%)</span><span id="g-killswitch-val">50</span></div>
+              <input type="range" min="10" max="80" step="5" value="50" id="g-killswitch">
             </div>
             <div class="range-row">
-              <div class="range-row-top"><span>רגישות להתאמת אנרגיה</span><span id="g-energy-val">70</span></div>
-              <input type="range" min="0" max="100" value="70" id="g-energy">
+              <div class="range-row-top"><span>מקדם החלקה EMA (%)</span><span id="g-alpha-val">60</span></div>
+              <input type="range" min="5" max="95" step="5" value="60" id="g-alpha">
             </div>
           </div>
+          <div id="g-mirroring-status" class="setting-row-desc" style="margin-top:10px; min-height:16px;"></div>
         </div>
       </div>
 
@@ -101,26 +102,21 @@
         <div class="setting-row">
           <div>
             <div class="setting-row-label">התערבות אוטומטית</div>
-            <div class="setting-row-desc">העבר אוטומטית למוקדן כאשר Rapport Score נמוך</div>
+            <div class="setting-row-desc">העבר אוטומטית למוקדן כאשר Rapport Score נמוך או כשהמרואיין נתקע על שאלה</div>
           </div>
           <label class="toggle-switch"><input type="checkbox" id="g-hybrid-enabled" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="setting-row" style="display:block;">
           <div class="setting-row-label" style="margin-bottom:12px;">הגדרות מתקדמות</div>
           <div class="range-row">
-            <div class="range-row-top"><span>סף להתערבות Rapport</span><span id="g-rapport-val">50</span></div>
-            <input type="range" min="0" max="100" value="50" id="g-rapport">
+            <div class="range-row-top"><span>סף להתערבות Rapport (%)</span><span id="g-rapport-val">45</span></div>
+            <input type="range" min="0" max="100" step="5" value="45" id="g-rapport">
           </div>
-          <div class="grid-2" style="margin-top:14px;">
-            <div>
-              <div class="setting-row-desc" style="margin-bottom:6px;">זמן המתנה מקסימלי (דקות)</div>
-              <input class="form-input" type="number" id="g-max-wait" value="2">
-            </div>
-            <div>
-              <div class="setting-row-desc" style="margin-bottom:6px;">מספר ניסיונות חוזרים</div>
-              <input class="form-input" type="number" id="g-retries" value="3">
-            </div>
+          <div style="margin-top:14px;">
+            <div class="setting-row-desc" style="margin-bottom:6px;">מספר ניסיונות חוזרים לפני העברה</div>
+            <input class="form-input" type="number" min="1" max="20" id="g-retries" value="4">
           </div>
+          <div id="g-hybrid-status" class="setting-row-desc" style="margin-top:10px; min-height:16px;"></div>
         </div>
       </div>
 
@@ -129,34 +125,25 @@
           <div style="display:flex; gap:12px; align-items:center;">
             <div class="settings-icon">🗄️</div>
             <div>
-              <h2>Data Quality &amp; Bias Correction</h2>
-              <p>תיקון הטיות ובקרת איכות נתונים</p>
+              <h2>Data Quality &amp; Anomaly Detection</h2>
+              <p>זיהוי שיחות חריגות באיכות הנתונים</p>
             </div>
           </div>
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-row-label">תיקון הטיות אוטומטי</div>
-            <div class="setting-row-desc">ניטור ותיקון הטיות במדגם בזמן אמת</div>
+            <div class="setting-row-label">זיהוי שיחות חריגות</div>
+            <div class="setting-row-desc">סמן שיחות קצרות במיוחד או באיכות זיהוי-דיבור נמוכה כחריגות באנליטיקה</div>
           </div>
-          <label class="toggle-switch"><input type="checkbox" id="g-bias-enabled" checked><span class="toggle-slider"></span></label>
+          <label class="toggle-switch"><input type="checkbox" id="g-anomaly-enabled" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="setting-row" style="display:block;">
           <div class="setting-row-label" style="margin-bottom:12px;">הגדרות מתקדמות</div>
-          <div class="grid-2">
-            <div class="range-row">
-              <div class="range-row-top"><span>משקל דמוגרפי</span><span id="g-demo-val">60</span></div>
-              <input type="range" min="0" max="100" value="60" id="g-demo">
-            </div>
-            <div class="range-row">
-              <div class="range-row-top"><span>סף אנומליה</span><span id="g-anomaly-val">85</span></div>
-              <input type="range" min="0" max="100" value="85" id="g-anomaly">
-            </div>
+          <div class="range-row">
+            <div class="range-row-top"><span>סף איכות לזיהוי חריגה (%)</span><span id="g-anomaly-val">55</span></div>
+            <input type="range" min="0" max="100" step="5" value="55" id="g-anomaly">
           </div>
-          <div class="range-row" style="margin-top:14px;">
-            <div class="range-row-top"><span>משקל התנהגותי</span><span id="g-behavior-val">40</span></div>
-            <input type="range" min="0" max="100" value="40" id="g-behavior">
-          </div>
+          <div id="g-quality-status" class="setting-row-desc" style="margin-top:10px; min-height:16px;"></div>
         </div>
       </div>
 
