@@ -33,6 +33,7 @@ from .models import (
     ConversationTurn,
     CrossSurveyMatch,
     DemographicWeight,
+    DoNotCallEntry,
     EntityMention,
     FreeTextAnalysis,
     FreeTextLabel,
@@ -45,6 +46,7 @@ from .intelligence.fact_check import fact_check_answer, fact_check_campaign
 from .intelligence.free_text import analyze_answer, analyze_campaign_free_text
 from .intelligence.interviewee import build_interviewee_profiles, enrich_interviewee_from_session
 from .intelligence.ner import process_session_ner
+from .voice.agent.schema import AgentIntent
 from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.nlu.schema import IntentType
@@ -64,7 +66,7 @@ from .operator.router import router as operator_router
 from .settings.router import router as settings_router
 from .settings.dnc import router as settings_dnc_router
 from .settings.audit import router as settings_audit_router
-from .settings.dnc import is_blocked
+from .settings.dnc import is_blocked, normalize_phone
 from .telephony.gateway import get_gateway
 from .telephony.router import set_voice_sessions_store
 from .telephony.router import router as telephony_router
@@ -331,7 +333,17 @@ def _next_attempt_eligible(
         # The caller asked to be called back later — honor the short retry
         # delay only. The long cooldown exists to avoid re-bothering someone
         # who was already successfully reached, which doesn't apply here.
-        ready_at = retry_ready_at
+        # If the caller named a specific time ("call me tomorrow evening"),
+        # honor THAT instead of the generic delay — see process_voice_turn,
+        # which parses and stores it via app/voice/nlu/callback_time.py.
+        requested_at: datetime | None = None
+        requested_raw = (participant.meta or {}).get("requested_callback_at")
+        if requested_raw:
+            try:
+                requested_at = datetime.fromisoformat(requested_raw)
+            except ValueError:
+                requested_at = None
+        ready_at = requested_at if requested_at is not None else retry_ready_at
     else:
         cooldown_ready_at = finished_at + timedelta(hours=policy.cooldown_hours)
         ready_at = max(retry_ready_at, cooldown_ready_at)
@@ -360,6 +372,14 @@ async def _dial_participant(db: Session, campaign: Campaign, participant: Partic
     )
     db.add(attempt)
     db.flush()
+
+    # Consume any caller-requested callback time now that we're acting on
+    # it — otherwise it would keep overriding the generic retry policy on
+    # every future attempt too, not just the one it was requested for.
+    if participant.meta and "requested_callback_at" in participant.meta:
+        meta = dict(participant.meta)
+        meta.pop("requested_callback_at", None)
+        participant.meta = meta
 
     try:
         ctx, _result = await _create_and_start_voice_session(
@@ -1474,12 +1494,12 @@ def _auto_demographic_questions(campaign: Campaign) -> list[QuestionContext]:
         QuestionContext(
             question_id=-1, question_key="auto_age",
             prompt=("מה גילך?" if is_hebrew else "What is your age?"),
-            question_type="free_text", order_index=-2, config={},
+            question_type="free_text", order_index=-2, config={"validate": "age"},
         ),
         QuestionContext(
             question_id=-1, question_key="auto_city",
             prompt=("באיזו עיר או אזור אתה גר?" if is_hebrew else "Which city or area do you live in?"),
-            question_type="free_text", order_index=-1, config={},
+            question_type="free_text", order_index=-1, config={"validate": "city"},
         ),
     ]
 
@@ -1884,6 +1904,50 @@ async def process_voice_turn(
             call_log.status = final_status
             if result.session_complete:
                 call_log.ended_at = datetime.now(timezone.utc)
+
+            # Real Do-Not-Call enforcement: to_nlu_intent() (schema.py) always
+            # collapses OPT_OUT into the same NOT_NOW handling as a plain
+            # "call me later", so the only place that still knows this turn
+            # was an explicit opt-out is the raw agent_decision on `result`.
+            # Write it to the DNC list NOW, synchronously, before the response
+            # goes out — the campaign scheduler ticks every 5s (see
+            # _process_scheduler_tick) and checks is_blocked() before every
+            # dial, so this must already be committed by then. Previously the
+            # agent only spoke a promise ("I'll remove you") and nothing was
+            # ever actually recorded.
+            agent_intent = (result.agent_decision or {}).get("intent")
+            participant = (
+                db.query(Participant).filter(Participant.id == call_log.participant_id).first()
+                if call_log.participant_id else None
+            )
+            if agent_intent == AgentIntent.OPT_OUT.value:
+                normalized = normalize_phone(ctx.participant_phone)
+                if normalized and not is_blocked(db, normalized):
+                    db.add(DoNotCallEntry(
+                        phone_number=normalized,
+                        reason=f"Caller opted out during call (session {session_id})",
+                        added_by="voice-agent",
+                    ))
+                if participant:
+                    # Belt-and-suspenders: also stop this campaign's own
+                    # scheduler loop from selecting them (it filters on
+                    # Participant.opt_in), independent of the DNC list.
+                    participant.opt_in = False
+
+            # Caller-requested callback time ("call me tomorrow evening") —
+            # store it so the scheduler can honor the actual requested time
+            # instead of always falling back to the generic retry delay.
+            requested_at = (result.agent_decision or {}).get("requested_callback_at")
+            if requested_at and participant:
+                # A plain (non-Mutable) JSON column only sees a change when the
+                # attribute is reassigned a genuinely different object — mutating
+                # participant.meta in place (it's often already non-empty, e.g.
+                # {"attempt_number": 1} from _dial_participant) and reassigning
+                # the SAME object back would silently be dropped at flush time.
+                meta = dict(participant.meta or {})
+                meta["requested_callback_at"] = requested_at
+                participant.meta = meta
+
             db.commit()
 
     if result.session_complete:

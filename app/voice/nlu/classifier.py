@@ -13,6 +13,7 @@ def _word_boundary_re(keyword: str) -> re.Pattern:
     return re.compile(r"\b" + re.escape(keyword) + r"\b", re.IGNORECASE)
 
 from .schema import Intent, IntentType, NLUResult
+from .validators import VALIDATORS
 
 # ---------------------------------------------------------------------------
 # Keyword rule definitions
@@ -147,6 +148,7 @@ class RuleBasedClassifier:
         self,
         text: str,
         question_type: str | None = None,
+        question_config: dict | None = None,
     ) -> NLUResult:
         normalised = text.lower().strip()
 
@@ -183,7 +185,26 @@ class RuleBasedClassifier:
                 )
             )
 
-        # 3. For free_text, any non-empty utterance counts as an answer
+        # 3. For free_text, any non-empty utterance counts as an answer —
+        #    unless the question carries a structured validator (age/city on
+        #    the auto-asked intake questions), in which case the answer must
+        #    actually pass that check before being accepted.
+        validate_key = (question_config or {}).get("validate")
+        if question_type == "free_text" and validate_key in VALIDATORS:
+            is_valid, cleaned = VALIDATORS[validate_key](text)
+            if is_valid:
+                return NLUResult(
+                    primary=Intent(
+                        intent_type=IntentType.ANSWER,
+                        confidence=0.80,
+                        raw_text=text,
+                        extracted_value=str(cleaned),
+                    )
+                )
+            return NLUResult(
+                primary=Intent(intent_type=IntentType.UNKNOWN, confidence=0.35, raw_text=text)
+            )
+
         if question_type == "free_text" and normalised:
             return NLUResult(
                 primary=Intent(

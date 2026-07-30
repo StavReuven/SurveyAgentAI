@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import random
 import re
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from .schema import AgentDecision, AgentIntent, ExtractedAnswer, NextAction
+from ..nlu.callback_time import parse_callback_time
+from ..nlu.validators import VALIDATORS, clarification_for
 
 if TYPE_CHECKING:
     from app.voice.dialogue.fsm import QuestionContext
@@ -99,7 +102,16 @@ _OPT_OUT = re.compile(
     r"|i'?m not (doing|answering|participating)"
     r"|refuse|i refuse"
     r"|not interested|i'?m not interested"
-    r")\b",
+    r")\b"
+    # Hebrew equivalents
+    r"|אל תתקשר\w*|אל תתקשרו\w*|תפסיק\w* להתקשר|תפסיקו\w* להתקשר"
+    r"|תוריד\w* אותי|תורידו\w* אותי|תסיר\w* אותי|תסירו\w* אותי"
+    r"|תמחק\w* אותי|תמחקו\w* אותי|הסר\w* אותי|הסירו\w* אותי"
+    r"|לא רוצה שתתקשרו|לא רוצה שתתקשר|אל תיצור\w* קשר"
+    r"|תוריד\w* אותי מהרשימה|תסיר\w* אותי מהרשימה|תוציא\w* אותי מהרשימה"
+    r"|מספיק עם השיחות|מספיק להתקשר|תפסיק עם הסקר|תפסיקו עם הסקר"
+    r"|לא רוצה להשתתף בסקר|לא רוצה להשתתף|לא מעוניין\w* בסקר הזה|לא מעוניין\w* יותר"
+    r"|תנתק|תנתקו|תסגור\w* את זה|בטל\w* אותי|בטל\w* את המנוי",
     re.I,
 )
 _NOT_NOW = re.compile(
@@ -110,7 +122,14 @@ _NOT_NOW = re.compile(
     r"|i'?m busy|bad time|not a good time|i'?m in the middle"
     r"|another time|maybe later|some other time"
     r"|can('?t)? talk (now|right now)"
-    r")\b",
+    r")\b"
+    # Hebrew equivalents
+    r"|לא עכשיו|לא עכשיו תודה|לא היום"
+    r"|אח\"כ|אחר כך|מאוחר יותר|תתקשר\w* שוב|תתקשרו\w* שוב"
+    r"|תתקשר\w* אליי|תתקשרו\w* אליי|תתקשר\w* אלי|תתקשרו\w* אלי"
+    r"|תחזור\w* אליי|תחזרו אליי|תחזור\w* אלי|תחזרו אלי"
+    r"|אני עסוק\w*|זה לא זמן טוב|לא זמן מתאים|באמצע משהו"
+    r"|בזמן אחר|בפעם אחרת",
     re.I,
 )
 _REPEAT = re.compile(
@@ -416,6 +435,7 @@ class RuleBasedFallback:
                 next_action=NextAction.RESCHEDULE,
                 response_text=random.choice(_NOT_NOW_HE if he else _NOT_NOW_EN),
                 should_save_answer=False,
+                requested_callback_at=parse_callback_time(text, datetime.now(timezone.utc)),
             )
 
         # ── early answer extraction (before conversational/repeat patterns) ──
@@ -514,6 +534,34 @@ class RuleBasedFallback:
                 response_text=response_text,
                 should_save_answer=True,
                 extracted_answer=extracted,
+            )
+
+        # free_text with a structured validator (e.g. the auto-asked age/city
+        # intake questions, via QuestionContext.config["validate"]) — check the
+        # shape of the answer BEFORE ever accepting it, instead of falling
+        # through to the "any non-empty text counts" rule right below.
+        validate_key = (question.config or {}).get("validate") if question else None
+        if q_type == "free_text" and validate_key in VALIDATORS:
+            is_valid, cleaned = VALIDATORS[validate_key](text)
+            if is_valid:
+                ack = "תודה." if he else "Thanks."
+                response_text = self._build_transition(ack, next_question, he)
+                return AgentDecision(
+                    intent=AgentIntent.ANSWER,
+                    confidence=0.85,
+                    next_action=NextAction.CONTINUE,
+                    response_text=response_text,
+                    should_save_answer=True,
+                    extracted_answer=ExtractedAnswer(
+                        value=cleaned, type=validate_key, raw_text=text
+                    ),
+                )
+            return AgentDecision(
+                intent=AgentIntent.UNCLEAR,
+                confidence=0.35,
+                next_action=NextAction.ASK_CLARIFICATION,
+                response_text=clarification_for(validate_key, he),
+                should_save_answer=False,
             )
 
         # free_text: any non-empty, non-noise response counts

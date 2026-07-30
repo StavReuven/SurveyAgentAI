@@ -308,3 +308,174 @@ class TestHebrew:
     def test_repeat_hebrew_response(self):
         d = fb.analyze("say that again", _q(), language="he")
         assert d.intent == AgentIntent.REPEAT_QUESTION
+
+
+# ---------------------------------------------------------------------------
+# Structured validation on free_text questions (age/city — QuestionContext
+# .config["validate"]), the mechanism behind the auto-asked intake questions.
+# ---------------------------------------------------------------------------
+
+def _validated_q(validate_key: str) -> QuestionContext:
+    return QuestionContext(
+        question_id=-1,
+        question_key=f"auto_{validate_key}",
+        prompt="What is your age?" if validate_key == "age" else "Which city do you live in?",
+        question_type="free_text",
+        order_index=0,
+        config={"validate": validate_key},
+    )
+
+
+class TestAgeValidation:
+    def test_plain_number_accepted(self):
+        d = fb.analyze("34", _validated_q("age"))
+        assert d.intent == AgentIntent.ANSWER
+        assert d.should_save_answer is True
+        assert d.extracted_answer.value == 34
+
+    def test_number_in_sentence_accepted(self):
+        d = fb.analyze("I am 29 years old", _validated_q("age"))
+        assert d.intent == AgentIntent.ANSWER
+        assert d.extracted_answer.value == 29
+
+    def test_non_numeric_rejected_and_reasks(self):
+        d = fb.analyze("banana", _validated_q("age"))
+        assert d.intent == AgentIntent.UNCLEAR
+        assert d.next_action == NextAction.ASK_CLARIFICATION
+        assert d.should_save_answer is False
+        assert "number" in d.response_text.lower()
+
+    def test_i_dont_know_rejected(self):
+        d = fb.analyze("I don't know", _validated_q("age"))
+        assert d.intent == AgentIntent.UNCLEAR
+        assert d.should_save_answer is False
+
+    def test_out_of_range_rejected(self):
+        d = fb.analyze("400", _validated_q("age"))
+        assert d.intent == AgentIntent.UNCLEAR
+        assert d.should_save_answer is False
+
+    def test_hebrew_clarification_text(self):
+        d = fb.analyze("לא יודע", _validated_q("age"), language="he")
+        assert d.intent == AgentIntent.UNCLEAR
+        assert any(ord(c) > 0x590 for c in d.response_text)
+
+
+class TestCityValidation:
+    def test_city_name_accepted(self):
+        d = fb.analyze("Tel Aviv", _validated_q("city"))
+        assert d.intent == AgentIntent.ANSWER
+        assert d.extracted_answer.value == "Tel Aviv"
+
+    def test_small_town_not_in_any_fixed_list_still_accepted(self):
+        # Deliberately lenient: no closed city list, so a real town the
+        # validator has never heard of must still be accepted.
+        d = fb.analyze("Kfar Yona", _validated_q("city"))
+        assert d.intent == AgentIntent.ANSWER
+
+    def test_i_dont_know_rejected(self):
+        d = fb.analyze("I don't know", _validated_q("city"))
+        assert d.intent == AgentIntent.UNCLEAR
+        assert d.should_save_answer is False
+
+    def test_pure_number_rejected(self):
+        d = fb.analyze("34", _validated_q("city"))
+        assert d.intent == AgentIntent.UNCLEAR
+
+    def test_too_short_rejected(self):
+        d = fb.analyze("a", _validated_q("city"))
+        assert d.intent == AgentIntent.UNCLEAR
+
+
+class TestUnvalidatedFreeTextUnaffected:
+    """The generic (non-validated) free_text path — used by every ordinary
+    survey free_text question — must behave exactly as before."""
+
+    def test_arbitrary_text_still_accepted(self):
+        d = fb.analyze("the packaging could have been sturdier", _q("free_text"))
+        assert d.intent == AgentIntent.ANSWER
+        assert d.should_save_answer is True
+
+
+# ---------------------------------------------------------------------------
+# Hebrew opt-out / not-now detection — previously _OPT_OUT and _NOT_NOW only
+# matched English phrases (see TestHebrew.test_opt_out_in_english_still_works_
+# for_hebrew_sessions above), so a Hebrew caller saying "don't call me again"
+# in their own language was never actually detected as an opt-out.
+# ---------------------------------------------------------------------------
+
+class TestHebrewOptOutDetection:
+    def test_dont_call_again(self):
+        d = fb.analyze("אל תתקשרו אליי יותר", _q(), language="he")
+        assert d.intent == AgentIntent.OPT_OUT
+        assert d.next_action == NextAction.OPT_OUT
+
+    def test_remove_me_from_list(self):
+        d = fb.analyze("תסירו אותי מהרשימה בבקשה", _q(), language="he")
+        assert d.intent == AgentIntent.OPT_OUT
+
+    def test_not_interested_anymore(self):
+        d = fb.analyze("לא מעוניין יותר", _q(), language="he")
+        assert d.intent == AgentIntent.OPT_OUT
+
+    def test_response_text_is_hebrew(self):
+        d = fb.analyze("אל תתקשרו אליי יותר", _q(), language="he")
+        assert any(0x590 <= ord(c) <= 0x5FF for c in d.response_text)
+
+    def test_plain_answer_not_misdetected_as_opt_out(self):
+        # Guard against over-broad Hebrew patterns misfiring on an ordinary answer.
+        d = fb.analyze("שמונה", _q("rating"))
+        assert d.intent != AgentIntent.OPT_OUT
+
+
+class TestHebrewNotNowDetection:
+    def test_not_now(self):
+        d = fb.analyze("לא עכשיו", _q(), language="he")
+        assert d.intent == AgentIntent.NOT_NOW
+        assert d.next_action == NextAction.RESCHEDULE
+
+    def test_call_back_later(self):
+        d = fb.analyze("תתקשרו אליי אחר כך", _q(), language="he")
+        assert d.intent == AgentIntent.NOT_NOW
+
+    def test_busy_right_now(self):
+        d = fb.analyze("אני עסוקה כרגע", _q(), language="he")
+        assert d.intent == AgentIntent.NOT_NOW
+
+
+# ---------------------------------------------------------------------------
+# requested_callback_at — NOT_NOW should carry a parsed time when the caller
+# named one, and stay None (generic retry policy applies) when they didn't.
+# ---------------------------------------------------------------------------
+
+class TestRequestedCallbackAt:
+    def test_none_for_bare_not_now(self):
+        d = fb.analyze("not now", _q())
+        assert d.intent == AgentIntent.NOT_NOW
+        assert d.requested_callback_at is None
+
+    def test_none_for_bare_hebrew_not_now(self):
+        d = fb.analyze("לא עכשיו", _q(), language="he")
+        assert d.requested_callback_at is None
+
+    def test_set_when_caller_names_a_time_english(self):
+        d = fb.analyze("call me back tomorrow evening", _q())
+        assert d.intent == AgentIntent.NOT_NOW
+        assert d.requested_callback_at is not None
+        assert d.requested_callback_at.hour == 19
+
+    def test_set_when_caller_names_a_time_hebrew(self):
+        d = fb.analyze("תתקשרו אליי מחר בערב", _q(), language="he")
+        assert d.intent == AgentIntent.NOT_NOW
+        assert d.requested_callback_at is not None
+        assert d.requested_callback_at.hour == 19
+
+    def test_included_in_to_dict(self):
+        d = fb.analyze("call me back in an hour", _q())
+        payload = d.to_dict()
+        assert payload["requested_callback_at"] is not None
+
+    def test_none_serialises_as_null_in_to_dict(self):
+        d = fb.analyze("not now", _q())
+        payload = d.to_dict()
+        assert payload["requested_callback_at"] is None
