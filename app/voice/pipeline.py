@@ -72,6 +72,7 @@ class VoicePipeline:
         config: PipelineConfig | None = None,
         mirroring_settings: MirroringSettings | None = None,
         agent_service: AgentAIService | None = None,
+        escalation_config: EscalationConfig | None = None,
     ) -> None:
         self._config = config or PipelineConfig()
         self._stt: STTAdapter = stt_adapter or MockSTTAdapter(config=self._config.stt_config)
@@ -82,7 +83,10 @@ class VoicePipeline:
         self._feature_extractor = FeatureExtractor()
         self._mirroring_policy = MirroringPolicy(mirroring_settings)
         self._agent: AgentAIService | None = agent_service
-        self._escalation_config = EscalationConfig()
+        # SAA-81-style: caller may inject a shared, mutable EscalationConfig so a
+        # settings endpoint can update live escalation behavior in place, exactly
+        # like mirroring_settings above. Falls back to defaults when not given.
+        self._escalation_config = escalation_config or EscalationConfig()
 
     # -----------------------------------------------------------------------
     # Session lifecycle

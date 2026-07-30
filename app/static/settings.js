@@ -25,22 +25,149 @@ function initTabs() {
   });
 }
 
-// ── General prefs (client-side only; no backend endpoint yet) ─────────────
+// ── General prefs — privacy + notification toggles only. Voice Mirroring,
+// Hybrid Intervention and Data Quality live on the server now (see the
+// loadMirroringGeneral/loadEscalationSettings/loadQualitySettings blocks
+// below) — they used to be silently localStorage-only with no effect on
+// real calls; that's no longer true for these three cards. ────────────────
 const GENERAL_FIELDS = {
-  'g-mirroring-enabled': 'checked', 'g-tone': 'value', 'g-pace': 'value', 'g-adapt-seconds': 'value',
-  'g-energy': 'value', 'g-hybrid-enabled': 'checked', 'g-rapport': 'value', 'g-max-wait': 'value',
-  'g-retries': 'value', 'g-bias-enabled': 'checked', 'g-demo': 'value', 'g-anomaly': 'value',
-  'g-behavior': 'value', 'g-opt-in': 'checked', 'g-recording': 'checked', 'g-anon': 'checked',
+  'g-opt-in': 'checked', 'g-recording': 'checked', 'g-anon': 'checked',
   'n-intervention': 'checked', 'n-completed': 'checked', 'n-anomaly': 'checked', 'n-daily-report': 'checked',
 };
 const GENERAL_STORAGE_KEY = 'voicesurvey.settings.general';
 
 function wireRangeLabels() {
-  [['g-tone', 'g-tone-val'], ['g-pace', 'g-pace-val'], ['g-energy', 'g-energy-val'],
-   ['g-rapport', 'g-rapport-val'], ['g-demo', 'g-demo-val'], ['g-anomaly', 'g-anomaly-val'],
-   ['g-behavior', 'g-behavior-val']].forEach(([inputId, labelId]) => {
+  [['g-rate', 'g-rate-val'], ['g-pitch', 'g-pitch-val'], ['g-killswitch', 'g-killswitch-val'],
+   ['g-alpha', 'g-alpha-val'], ['g-rapport', 'g-rapport-val'], ['g-anomaly', 'g-anomaly-val'],
+  ].forEach(([inputId, labelId]) => {
     const input = $(inputId);
     input.addEventListener('input', () => { $(labelId).textContent = input.value; });
+  });
+}
+
+// ── Voice Mirroring — same live global settings as voice.html's panel ──────
+async function loadMirroringGeneral() {
+  try {
+    const s = await api('/api/mirroring/settings');
+    $('g-mirroring-enabled').checked = s.enabled;
+    $('g-rate').value = Math.round(s.max_rate_delta * 100);
+    $('g-rate-val').textContent = Math.round(s.max_rate_delta * 100);
+    $('g-pitch').value = s.max_pitch_semitones;
+    $('g-pitch-val').textContent = s.max_pitch_semitones;
+    $('g-killswitch').value = Math.round(s.kill_switch_rapport_threshold * 100);
+    $('g-killswitch-val').textContent = Math.round(s.kill_switch_rapport_threshold * 100);
+    $('g-alpha').value = Math.round(s.smoothing_alpha * 100);
+    $('g-alpha-val').textContent = Math.round(s.smoothing_alpha * 100);
+  } catch (e) {
+    $('g-mirroring-status').textContent = `שגיאה בטעינה: ${e.message}`;
+  }
+}
+
+let _mirroringSaveTimer = null;
+function saveMirroringGeneral() {
+  clearTimeout(_mirroringSaveTimer);
+  _mirroringSaveTimer = setTimeout(async () => {
+    try {
+      await api('/api/mirroring/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: $('g-mirroring-enabled').checked,
+          max_rate_delta: parseInt($('g-rate').value, 10) / 100,
+          max_pitch_semitones: parseFloat($('g-pitch').value),
+          kill_switch_rapport_threshold: parseInt($('g-killswitch').value, 10) / 100,
+          smoothing_alpha: parseInt($('g-alpha').value, 10) / 100,
+          calibration_turns: 1,
+        }),
+      });
+      $('g-mirroring-status').textContent = 'השינויים נשמרו ✓';
+      setTimeout(() => { $('g-mirroring-status').textContent = ''; }, 2000);
+    } catch (e) {
+      $('g-mirroring-status').textContent = `שגיאה בשמירה: ${e.message}`;
+    }
+  }, 400);
+}
+
+function wireMirroringGeneral() {
+  ['g-mirroring-enabled', 'g-rate', 'g-pitch', 'g-killswitch', 'g-alpha'].forEach((id) => {
+    $(id).addEventListener('change', saveMirroringGeneral);
+  });
+}
+
+// ── Hybrid Intervention System — real EscalationConfig, live in the pipeline ──
+async function loadEscalationSettings() {
+  try {
+    const s = await api('/api/escalation/settings');
+    $('g-hybrid-enabled').checked = s.enabled;
+    $('g-rapport').value = Math.round(s.low_rapport_threshold * 100);
+    $('g-rapport-val').textContent = Math.round(s.low_rapport_threshold * 100);
+    $('g-retries').value = s.max_retries;
+  } catch (e) {
+    $('g-hybrid-status').textContent = `שגיאה בטעינה: ${e.message}`;
+  }
+}
+
+let _escalationSaveTimer = null;
+function saveEscalationSettings() {
+  clearTimeout(_escalationSaveTimer);
+  _escalationSaveTimer = setTimeout(async () => {
+    try {
+      await api('/api/escalation/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: $('g-hybrid-enabled').checked,
+          low_rapport_threshold: parseInt($('g-rapport').value, 10) / 100,
+          max_retries: parseInt($('g-retries').value, 10) || 1,
+        }),
+      });
+      $('g-hybrid-status').textContent = 'השינויים נשמרו ✓';
+      setTimeout(() => { $('g-hybrid-status').textContent = ''; }, 2000);
+    } catch (e) {
+      $('g-hybrid-status').textContent = `שגיאה בשמירה: ${e.message}`;
+    }
+  }, 400);
+}
+
+function wireEscalationSettings() {
+  ['g-hybrid-enabled', 'g-rapport', 'g-retries'].forEach((id) => {
+    $(id).addEventListener('change', saveEscalationSettings);
+  });
+}
+
+// ── Data Quality / Anomaly Detection — real thresholds in analytics/router.py ──
+async function loadQualitySettings() {
+  try {
+    const s = await api('/api/quality/settings');
+    $('g-anomaly-enabled').checked = s.enabled;
+    $('g-anomaly').value = s.anomaly_quality_threshold;
+    $('g-anomaly-val').textContent = s.anomaly_quality_threshold;
+  } catch (e) {
+    $('g-quality-status').textContent = `שגיאה בטעינה: ${e.message}`;
+  }
+}
+
+let _qualitySaveTimer = null;
+function saveQualitySettings() {
+  clearTimeout(_qualitySaveTimer);
+  _qualitySaveTimer = setTimeout(async () => {
+    try {
+      await api('/api/quality/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: $('g-anomaly-enabled').checked,
+          anomaly_quality_threshold: parseFloat($('g-anomaly').value),
+        }),
+      });
+      $('g-quality-status').textContent = 'השינויים נשמרו ✓';
+      setTimeout(() => { $('g-quality-status').textContent = ''; }, 2000);
+    } catch (e) {
+      $('g-quality-status').textContent = `שגיאה בשמירה: ${e.message}`;
+    }
+  }, 400);
+}
+
+function wireQualitySettings() {
+  ['g-anomaly-enabled', 'g-anomaly'].forEach((id) => {
+    $(id).addEventListener('change', saveQualitySettings);
   });
 }
 
@@ -261,6 +388,13 @@ async function loadAudit() {
   loadGeneralPrefs();
   $('g-save').addEventListener('click', saveGeneralPrefs);
   $('g-reset').addEventListener('click', resetGeneralPrefs);
+
+  wireMirroringGeneral();
+  wireEscalationSettings();
+  wireQualitySettings();
+  loadMirroringGeneral();
+  loadEscalationSettings();
+  loadQualitySettings();
 
   loadProviders();
   loadDnc();

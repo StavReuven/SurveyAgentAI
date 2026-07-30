@@ -49,9 +49,13 @@ from .voice.agent.service import AgentAIService
 from .voice.dialogue.fsm import QuestionContext
 from .voice.nlu.schema import IntentType
 from .voice.mirroring.policy import MirroringPolicy, MirroringSettings
-from .voice.escalation import get_escalation_queue
+from .voice.escalation import EscalationConfig, get_escalation_queue
 from .voice.pipeline import VoicePipeline
-from .analytics.router import router as analytics_router, global_router as analytics_global_router
+from .analytics.router import (
+    router as analytics_router,
+    global_router as analytics_global_router,
+    quality_settings as _quality_settings,
+)
 from .dashboard.router import router as dashboard_router, set_live_sessions_store
 from .auth.deps import get_current_user
 from .auth.router import router as auth_router
@@ -1357,8 +1361,16 @@ _mirroring_settings = MirroringSettings(
     calibration_turns=1,     # lock baseline after first turn (was 2)
     max_rate_delta=0.35,     # ±35% range → 0.65x–1.35x (was ±20%)
 )
+# Global escalation settings (mutated in place by the settings endpoint), same
+# pattern as _mirroring_settings above — defaults match EscalationConfig's own
+# dataclass defaults, so wiring this in changes nothing until someone edits it.
+_escalation_config = EscalationConfig()
 _agent_service = AgentAIService()   # uses ANTHROPIC_API_KEY env var; falls back to rules if absent
-_pipeline = VoicePipeline(mirroring_settings=_mirroring_settings, agent_service=_agent_service)
+_pipeline = VoicePipeline(
+    mirroring_settings=_mirroring_settings,
+    agent_service=_agent_service,
+    escalation_config=_escalation_config,
+)
 
 # Wire session store into dashboard router so live-calls endpoint can read it.
 set_live_sessions_store(_voice_sessions)
@@ -1388,6 +1400,19 @@ class MirroringSettingsRequest(BaseModel):
     calibration_turns: int = 1
     baseline_drift_alpha: float = 0.04
     rapport_rate_weight: bool = True
+
+
+# Pydantic schema for the "Hybrid Intervention System" settings card
+class EscalationSettingsRequest(BaseModel):
+    enabled: bool = True
+    low_rapport_threshold: float = 0.45
+    max_retries: int = 4
+
+
+# Pydantic schema for the "Data Quality & Bias Correction" settings card
+class QualitySettingsRequest(BaseModel):
+    enabled: bool = True
+    anomaly_quality_threshold: float = 55.0
 
 
 _HESITATION_WORDS = frozenset(
@@ -2024,6 +2049,52 @@ def update_mirroring_settings(payload: MirroringSettingsRequest):
     _mirroring_settings.baseline_drift_alpha = max(0.0, min(0.20, payload.baseline_drift_alpha))
     _mirroring_settings.rapport_rate_weight = payload.rapport_rate_weight
     return get_mirroring_settings()
+
+
+# ===========================================================================
+# Hybrid Intervention System settings (Settings page → automatic escalation)
+# ===========================================================================
+
+@app.get("/api/escalation/settings")
+def get_escalation_settings():
+    """Return the current global escalation/hybrid-intervention settings."""
+    c = _escalation_config
+    return {
+        "enabled": c.enabled,
+        "low_rapport_threshold": c.low_rapport_threshold,
+        "max_retries": c.max_retries,
+    }
+
+
+@app.put("/api/escalation/settings")
+def update_escalation_settings(payload: EscalationSettingsRequest):
+    """Update global escalation settings (applied to all new + running sessions)."""
+    _escalation_config.enabled = payload.enabled
+    _escalation_config.low_rapport_threshold = max(0.0, min(1.0, payload.low_rapport_threshold))
+    _escalation_config.max_retries = max(1, min(20, payload.max_retries))
+    return get_escalation_settings()
+
+
+# ===========================================================================
+# Data Quality & Bias Correction settings (Settings page → anomaly detection)
+# ===========================================================================
+
+@app.get("/api/quality/settings")
+def get_quality_settings():
+    """Return the current global data-quality / anomaly-detection settings."""
+    q = _quality_settings
+    return {
+        "enabled": q.enabled,
+        "anomaly_quality_threshold": q.anomaly_quality_threshold,
+    }
+
+
+@app.put("/api/quality/settings")
+def update_quality_settings(payload: QualitySettingsRequest):
+    """Update global data-quality settings (applied to analytics immediately)."""
+    _quality_settings.enabled = payload.enabled
+    _quality_settings.anomaly_quality_threshold = max(0.0, min(100.0, payload.anomaly_quality_threshold))
+    return get_quality_settings()
 
 
 # ===========================================================================
