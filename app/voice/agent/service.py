@@ -82,6 +82,15 @@ def _build_user_message(
             lines.append(f"  options: {cfg['options']}")
         if cfg.get("min") is not None:
             lines.append(f"  range: {cfg['min']}–{cfg.get('max', 10)}")
+        if cfg.get("validate") == "age":
+            lines.append("  validate: this answer MUST be a number (a person's age, 1-120)."
+                          " If the reply has no valid number in it, do NOT accept it as an"
+                          " answer — respond with ASK_CLARIFICATION and ask for the age as a number.")
+        elif cfg.get("validate") == "city":
+            lines.append("  validate: this answer must name an actual city/town/area."
+                          " If the reply is a non-answer (\"I don't know\", \"no\", silence-filler,"
+                          " a number, etc.) do NOT accept it — respond with ASK_CLARIFICATION and"
+                          " ask again for the city name.")
     else:
         lines.append("\nNo active question (greeting phase).")
 

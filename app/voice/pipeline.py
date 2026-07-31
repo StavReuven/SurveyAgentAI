@@ -177,7 +177,9 @@ class VoicePipeline:
             )
             intent = agent_decision.to_nlu_intent()
         else:
-            nlu_result = self._nlu.classify(final_text, question_type=question_type)
+            nlu_result = self._nlu.classify(
+                final_text, question_type=question_type, question_config=q.config if q else None
+            )
             intent = nlu_result.primary
 
         # Log caller transcript (include confidence for rapport + mirroring)

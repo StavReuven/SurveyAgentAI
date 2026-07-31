@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -57,10 +58,18 @@ class AgentDecision:
     extracted_answer: ExtractedAnswer | None = None
     next_question_id: str | None = None
     reason: str = ""   # internal reasoning, never spoken
+    # Set only for NOT_NOW when the caller named a specific time ("call me
+    # tomorrow evening") — see app/voice/nlu/callback_time.py. None means no
+    # specific time was recognised; the caller falls back to the campaign's
+    # generic retry_delay_minutes policy.
+    requested_callback_at: datetime | None = None
 
     def to_dict(self) -> dict:
         return {
             "intent": self.intent.value,
+            "requested_callback_at": (
+                self.requested_callback_at.isoformat() if self.requested_callback_at else None
+            ),
             "extracted_answer": self.extracted_answer.to_dict() if self.extracted_answer else None,
             "confidence": round(self.confidence, 4),
             "next_action": self.next_action.value,
