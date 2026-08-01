@@ -47,9 +47,13 @@ class TelephonyGateway:
                 # many seconds pass with no answer — confirmed via a live call's
                 # Twilio Console trace: duration was exactly 90s with
                 # SipResponseCode=487, meaning WE hung it up, not the carrier.
-                # 90s still wasn't enough for the callee to reach the phone in
-                # time, so give it more headroom.
-                timeout=150,
+                # 90s wasn't enough, then 150s still wasn't enough either —
+                # a second live trace showed Twilio's SIP "ringing" status
+                # firing ~148s before the callee's phone ever audibly rang
+                # (international call-setup/routing delay, not the callee
+                # being slow to answer), so the callee was answering right as
+                # our own timeout fired the CANCEL. Give it real headroom.
+                timeout=300,
             )
         except TwilioRestException as exc:
             raise RuntimeError(f"Twilio error: {exc.msg}") from exc

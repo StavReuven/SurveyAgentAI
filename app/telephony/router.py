@@ -58,6 +58,19 @@ def set_voice_sessions_store(store: dict[str, dict]) -> None:
     _voice_sessions = store
 
 
+def _touch_session(session_id: str) -> None:
+    """Mark that Twilio just contacted us about this session — including
+    empty-Gather retries where the caller said nothing. Used by
+    _stale_session_sweep_loop (main.py) to distinguish a genuinely dead/
+    orphaned session from one where the caller is just slow to respond:
+    Twilio's own <Gather timeout=8> guarantees a webhook hit at least every
+    ~8-10s for any call that's actually still connected, so a session going
+    minutes without a single touch is a reliable dead-call signal."""
+    session = _voice_sessions.get(session_id)
+    if session is not None:
+        session["last_touch_at"] = datetime.now(timezone.utc)
+
+
 # ── SAA-41: Outbound call API ──────────────────────────────────────────────
 
 @router.post("/calls")
@@ -108,6 +121,7 @@ async def webhook_voice(
     Twilio calls this when the participant answers.
     Fetches the first greeting from the voice session and returns TwiML.
     """
+    _touch_session(session_id)
     import httpx
     gather_url = (
         f"{TWILIO_WEBHOOK_BASE_URL}/api/telephony/webhook/gather"
@@ -159,6 +173,7 @@ async def webhook_resume(
     Conference back to the AI agent (after 'return to agent'). Re-asks the
     session's current question via the pipeline's [resume] turn instead of
     leaving the caller in dead air or restarting the survey from scratch."""
+    _touch_session(session_id)
     from ..models import Campaign
     campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     lang = getattr(campaign, "language", "en") if campaign else "en"
@@ -217,6 +232,7 @@ async def webhook_gather(
     Twilio posts the participant's speech here after each Gather.
     We forward to the voice pipeline and respond with the next question.
     """
+    _touch_session(session_id)
     logger.info(
         "gather session=%s speech=%r confidence=%s",
         session_id, SpeechResult, Confidence,

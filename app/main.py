@@ -99,6 +99,7 @@ logger = logging.getLogger(__name__)
 _scheduler_task: asyncio.Task | None = None
 _telephony_watchdog: asyncio.Task | None = None
 _db_keepalive_task: asyncio.Task | None = None
+_stale_session_task: asyncio.Task | None = None
 _last_activity_at: datetime = datetime.now(timezone.utc)
 
 # Neon (and similar serverless Postgres) suspends its compute after a few
@@ -123,6 +124,69 @@ async def _db_keepalive_loop() -> None:
                 conn.execute(text("SELECT 1"))
         except Exception:
             logger.warning("DB keep-alive ping failed", exc_info=True)
+
+
+# A live call keeps hitting our Twilio webhooks constantly no matter how slow
+# or quiet the caller is — Gather's own 8s timeout guarantees that. So a
+# session that's gone completely untouched for this long isn't "a slow
+# talker", it's a dropped call, a crash mid-conversation, or an escalation
+# nobody ever resolved — dead in all but name, but still showing as "live"
+# on the dashboard forever since nothing else ever marks it complete.
+STALE_SESSION_SWEEP_INTERVAL_SECONDS = 120
+STALE_SESSION_IDLE_THRESHOLD_SECONDS = 900  # 15 minutes
+
+
+async def _stale_session_sweep_loop() -> None:
+    while True:
+        await asyncio.sleep(STALE_SESSION_SWEEP_INTERVAL_SECONDS)
+        try:
+            # _sweep_stale_sessions does blocking, synchronous DB calls
+            # whenever it actually finds something to clean up — same
+            # lesson as _run_scheduler_tick_sync: never run those directly
+            # on the event loop, or a slow DB round-trip freezes every
+            # other request (including live Twilio webhooks) until it
+            # returns. run_in_executor keeps this loop's own timing async
+            # while the blocking work happens in a real OS thread.
+            await asyncio.get_running_loop().run_in_executor(None, _sweep_stale_sessions)
+        except Exception:
+            logger.warning("Stale voice-session sweep failed", exc_info=True)
+
+
+def _sweep_stale_sessions() -> None:
+    now = datetime.now(timezone.utc)
+    stale_ids: list[str] = []
+    for session_id, session in _voice_sessions.items():
+        if session.get("completed_at"):
+            continue
+        last_touch = session.get("last_touch_at")
+        if last_touch is None:
+            continue  # brand new session that hasn't had a chance to be touched yet
+        idle_seconds = (now - last_touch).total_seconds()
+        if idle_seconds > STALE_SESSION_IDLE_THRESHOLD_SECONDS:
+            stale_ids.append(session_id)
+
+    if not stale_ids:
+        return
+
+    db = SessionLocal()
+    try:
+        for session_id in stale_ids:
+            session = _voice_sessions.get(session_id)
+            if session is None or session.get("completed_at"):
+                continue  # completed or removed by something else while we were iterating
+            session["completed_at"] = now.isoformat()
+            logger.info("Stale voice session swept: %s", session_id)
+
+            call_log = db.query(CallLog).filter(CallLog.session_id == session_id).first()
+            if call_log and call_log.status == "active":
+                call_log.status = "failed"
+                call_log.ended_at = now
+        db.commit()
+    except Exception:
+        logger.exception("Stale voice-session sweep DB update failed")
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _migrate_db() -> None:
@@ -199,7 +263,7 @@ def _migrate_db() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _scheduler_task, _telephony_watchdog, _db_keepalive_task
+    global _scheduler_task, _telephony_watchdog, _db_keepalive_task, _stale_session_task
     if not getattr(_app.state, "disable_scheduler", False):
         _migrate_db()
         if _scheduler_task is None or _scheduler_task.done():
@@ -208,6 +272,8 @@ async def lifespan(_app: FastAPI):
             _telephony_watchdog = start_watchdog(get_telephony_store())
         if _db_keepalive_task is None or _db_keepalive_task.done():
             _db_keepalive_task = asyncio.create_task(_db_keepalive_loop())
+        if _stale_session_task is None or _stale_session_task.done():
+            _stale_session_task = asyncio.create_task(_stale_session_sweep_loop())
     yield
     if _scheduler_task:
         _scheduler_task.cancel()
@@ -215,6 +281,9 @@ async def lifespan(_app: FastAPI):
     if _telephony_watchdog:
         _telephony_watchdog.cancel()
         _telephony_watchdog = None
+    if _stale_session_task:
+        _stale_session_task.cancel()
+        _stale_session_task = None
     if _db_keepalive_task:
         _db_keepalive_task.cancel()
         _db_keepalive_task = None
@@ -1556,6 +1625,10 @@ async def _create_and_start_voice_session(
         "tts_metrics": [],
         "stt_metrics": [],
         "last_response_text": result.response_text,
+        # Updated on every Twilio webhook hit for this session (even empty
+        # Gather retries) — NOT just successful turns, since a slow-talking
+        # caller shouldn't ever look "stale". See _stale_session_sweep_loop.
+        "last_touch_at": datetime.now(timezone.utc),
     }
 
     # SAA-101: persist call log for dashboard metrics
