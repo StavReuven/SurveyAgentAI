@@ -71,6 +71,52 @@ def _touch_session(session_id: str) -> None:
         session["last_touch_at"] = datetime.now(timezone.utc)
 
 
+# Twilio's real-call Gather webhook never reports how long the caller actually
+# spoke, so speaking-rate mirroring previously fell back to a pure character-
+# count guess (len(text) * 60ms) with zero connection to real timing. This
+# gives a much better proxy: wall-clock time from when we sent the prompt to
+# when the SpeechResult webhook fires. But that raw elapsed time includes OUR
+# OWN prompt being spoken first, plus any silence before the caller starts —
+# so we estimate how long our own prompt took (using the same words/wpm-style
+# approximation TTSAdapter uses) and subtract it, isolating roughly "silence +
+# caller's actual response" instead of the whole round trip.
+_ASSUMED_TTS_WPM = 150.0
+
+
+def _estimate_speak_duration_ms(text: str, speaking_rate: float = 1.0) -> float:
+    words = max(1, len((text or "").split()))
+    wpm = _ASSUMED_TTS_WPM * max(0.5, speaking_rate)
+    return (words / wpm) * 60_000
+
+
+def _mark_prompt_sent(session_id: str, text: str, speaking_rate: float = 1.0) -> None:
+    """Record when + how long the prompt we're about to speak is estimated to
+    take, so the *next* webhook_gather call can back out our own prompt's
+    speaking time from the wall-clock gap and isolate the caller's response
+    window. Called right before returning any TwiML that speaks a new prompt."""
+    session = _voice_sessions.get(session_id)
+    if session is not None:
+        session["prompt_sent_at"] = datetime.now(timezone.utc)
+        session["prompt_duration_ms"] = _estimate_speak_duration_ms(text, speaking_rate)
+
+
+def _estimate_caller_duration_ms(session_id: str) -> float | None:
+    """Wall-clock time since the prompt was sent, minus the prompt's own
+    estimated speaking time — a proxy for how long the caller took to
+    respond (still includes any thinking pause, but far closer to real
+    speech than pure character counting). None if we have no prior prompt
+    timestamp for this session (e.g. very first webhook for a call)."""
+    session = _voice_sessions.get(session_id)
+    if session is None:
+        return None
+    sent_at = session.get("prompt_sent_at")
+    if sent_at is None:
+        return None
+    elapsed_ms = (datetime.now(timezone.utc) - sent_at).total_seconds() * 1000
+    prompt_duration_ms = session.get("prompt_duration_ms", 0.0)
+    return max(300.0, elapsed_ms - prompt_duration_ms)
+
+
 # ── SAA-41: Outbound call API ──────────────────────────────────────────────
 
 @router.post("/calls")
@@ -145,6 +191,7 @@ async def webhook_voice(
         else fallback_greeting
     )
     no_response_text = "We did not receive a response. Goodbye." if not is_hebrew else "לא קיבלנו תגובה. להתראות."
+    _mark_prompt_sent(session_id, greeting_text)
 
     vr = VoiceResponse()
     gather = Gather(
@@ -152,7 +199,7 @@ async def webhook_voice(
         action=gather_url,
         method="POST",
         language=twiml_lang,
-        speech_timeout="1",
+        speech_timeout="auto",
         timeout=8,
         action_on_empty_result=True,
     )
@@ -210,13 +257,14 @@ async def webhook_resume(
         action=next_action_url,
         method="POST",
         language=twiml_lang,
-        speech_timeout="1",
+        speech_timeout="auto",
         timeout=8,
         action_on_empty_result=True,
     )
     gather.append(_build_say(response_text, twiml_lang))
     vr.append(gather)
     vr.append(_build_say(no_response_text, twiml_lang))
+    _mark_prompt_sent(session_id, response_text)
     return Response(content=str(vr), media_type="application/xml")
 
 
@@ -259,13 +307,20 @@ async def webhook_gather(
             action=next_action_url,
             method="POST",
             language=twiml_lang,
-            speech_timeout="1",
+            speech_timeout="auto",
             timeout=8,
             action_on_empty_result=True,
         )
         gather.append(_build_say(retry_text, twiml_lang))
         vr.append(gather)
+        _mark_prompt_sent(session_id, retry_text)
         return Response(content=str(vr), media_type="application/xml")
+
+    # Wall-clock-since-last-prompt proxy for how long the caller took to
+    # respond (minus our own prompt's estimated speaking time) — see
+    # _estimate_caller_duration_ms. Real speech-rate signal for mirroring
+    # instead of the old pure character-count guess.
+    audio_duration_ms = _estimate_caller_duration_ms(session_id)
 
     # Forward speech to internal voice pipeline via HTTP
     import httpx
@@ -273,7 +328,11 @@ async def webhook_gather(
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"http://localhost:8000/api/campaigns/{campaign_id}/voice/sessions/{session_id}/turn",
-                json={"transcript": SpeechResult, "confidence": Confidence or 0.8},
+                json={
+                    "transcript": SpeechResult,
+                    "confidence": Confidence or 0.8,
+                    "audio_duration_ms": audio_duration_ms,
+                },
                 timeout=10,
             )
             data = resp.json()
@@ -302,13 +361,14 @@ async def webhook_gather(
             action=next_action_url,
             method="POST",
             language=twiml_lang,
-            speech_timeout="1",
+            speech_timeout="auto",
             timeout=8,
             action_on_empty_result=True,
         )
         gather.append(_build_say(response_text, twiml_lang, speaking_rate, pitch))
         vr.append(gather)
         vr.append(_build_say(no_response_text, twiml_lang))
+        _mark_prompt_sent(session_id, response_text, speaking_rate)
 
     logger.info("DEBUG gather response ready session=%s", session_id)
     return Response(content=str(vr), media_type="application/xml")

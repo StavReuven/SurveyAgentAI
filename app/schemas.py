@@ -161,5 +161,5 @@ class CallAttemptOut(BaseModel):
     attempt_number: int
     outcome: str
     started_at: datetime
-    finished_at: datetime
+    finished_at: datetime | None = None  # null while the attempt is still "pending" (ringing/in-progress)
     note: str | None = None

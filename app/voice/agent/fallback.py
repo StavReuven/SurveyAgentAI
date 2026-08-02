@@ -166,12 +166,12 @@ _PACE_SLOWER_RE = re.compile(
 _ESCALATE = re.compile(
     r"\b("
     # explicit human-transfer requests (English)
-    r"speak (to|with) (a )?(human|person|agent|representative|supervisor|manager)"
-    r"|talk (to|with) (a )?(human|person|agent|representative|supervisor|manager)"
-    r"|connect me (to|with) (a )?(human|person|agent|representative|supervisor|manager)"
-    r"|let me (speak|talk) (to|with) (a )?(human|person|supervisor|manager|real person)"
-    r"|get me (a |your )?(supervisor|manager|human|person)"
-    r"|i want (a |to (speak|talk) (to|with) a )?(supervisor|manager|human|real person)"
+    r"speak (to|with) (a |the )?(human|person|agent|representative|supervisor|manager)"
+    r"|talk (to|with) (a |the )?(human|person|agent|representative|supervisor|manager)"
+    r"|connect me (to|with) (a |the )?(human|person|agent|representative|supervisor|manager)"
+    r"|let me (speak|talk) (to|with) (a |the )?(human|person|supervisor|manager|real person)"
+    r"|get me (a |the |your )?(supervisor|manager|human|person)"
+    r"|i want (a |the |to (speak|talk) (to|with) (a |the ))?(supervisor|manager|human|real person)"
     r"|transfer( me)?( to)?"
     r"|supervisor|escalate"
     # anger patterns (English)
@@ -182,7 +182,7 @@ _ESCALATE = re.compile(
     # human-transfer requests (Hebrew)
     r"|תעביר אותי (למנהל|לנציג|לבן אדם|לאדם אמיתי)"
     r"|רוצה לדבר (עם מנהל|עם נציג|עם בן אדם|עם ממונה)"
-    r"|אני רוצה (מנהל|נציג|בן אדם|ממונה)"
+    r"|אני רוצה (את ה|ה)?(מנהל|נציג|בן אדם|ממונה)"
     r"|תחבר אותי (למנהל|לנציג|לבן אדם)"
     r"|דבר (עם )?מנהל|מנהל בבקשה|ממונה בבקשה"
     r"|תן לי (לדבר עם )?(מנהל|נציג|בן אדם|ממונה)"
